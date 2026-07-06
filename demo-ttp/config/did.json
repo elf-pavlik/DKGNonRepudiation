@@ -6,28 +6,28 @@
   "id": "did:web:raw.githubusercontent.com:biagioboi:DKGNonRepudiation:main:demo-ttp:config",
   "verificationMethod": [
     {
-      "id": "did:web:raw.githubusercontent.com:biagioboi:DKGNonRepudiation:main:demo-ttp:config#z6MkjZpNhB8hcTSAVKiPPA8h7VYtiT43TUTAc87N872iw9rh",
+      "id": "did:web:raw.githubusercontent.com:biagioboi:DKGNonRepudiation:main:demo-ttp:config#z6Mkv2KwSoWJjarvhfFeJgN3yAcFLGjdmtPJQ7nxDS4J8ekH",
       "type": "Ed25519VerificationKey2018",
       "controller": "did:web:raw.githubusercontent.com:biagioboi:DKGNonRepudiation:main:demo-ttp:config",
-      "publicKeyBase58": "67ZL6vtGGuwhNpsghbArGPzttsnC3bCov7CSHq4i1w5K"
+      "publicKeyBase58": "Ga4trZFsQ3NTbAQwd7QD854FWhTnN18wi6t2PA6HDRxu"
     }
   ],
   "service": [
     {
       "id": "#inline-0",
-      "serviceEndpoint": "http://localhost:3070",
+      "serviceEndpoint": "http://demo-ttp:3070",
       "type": "did-communication",
       "priority": 0,
       "recipientKeys": [
-        "did:web:raw.githubusercontent.com:biagioboi:DKGNonRepudiation:main:demo-ttp:config#z6MkjZpNhB8hcTSAVKiPPA8h7VYtiT43TUTAc87N872iw9rh"
+        "did:web:raw.githubusercontent.com:biagioboi:DKGNonRepudiation:main:demo-ttp:config#z6Mkv2KwSoWJjarvhfFeJgN3yAcFLGjdmtPJQ7nxDS4J8ekH"
       ],
       "routingKeys": []
     }
   ],
   "authentication": [
-    "did:web:raw.githubusercontent.com:biagioboi:DKGNonRepudiation:main:demo-ttp:config#z6MkjZpNhB8hcTSAVKiPPA8h7VYtiT43TUTAc87N872iw9rh"
+    "did:web:raw.githubusercontent.com:biagioboi:DKGNonRepudiation:main:demo-ttp:config#z6Mkv2KwSoWJjarvhfFeJgN3yAcFLGjdmtPJQ7nxDS4J8ekH"
   ],
   "assertionMethod": [
-    "did:web:raw.githubusercontent.com:biagioboi:DKGNonRepudiation:main:demo-ttp:config#z6MkjZpNhB8hcTSAVKiPPA8h7VYtiT43TUTAc87N872iw9rh"
+    "did:web:raw.githubusercontent.com:biagioboi:DKGNonRepudiation:main:demo-ttp:config#z6Mkv2KwSoWJjarvhfFeJgN3yAcFLGjdmtPJQ7nxDS4J8ekH"
   ]
 }
