@@ -1,0 +1,83 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Solid Access Wallet</title>
+  <link rel="stylesheet" href="popup.css">
+  <script defer src="popup.js"></script>
+</head>
+
+<body>
+  <header class="app-header">
+    <div class="brand-mark" aria-hidden="true"><span></span></div>
+    <div class="header-copy">
+      <p class="eyebrow">DIDComm Wallet</p>
+      <h1>Solid Access Requests</h1>
+    </div>
+    <span id="readyStatus" class="status-pill">Starting</span>
+  </header>
+
+  <p class="intro-copy">
+    This wallet holds your credentials and answers access requests from apps.
+    When an app needs something from you, it shows up below under
+    <strong>Needs Your Attention</strong>.
+  </p>
+
+  <section class="panel">
+    <div class="section-heading">
+      <h2>Wallet Overview</h2>
+      <span id="walletUpdatedAt">Waiting</span>
+    </div>
+    <div id="walletOverview" class="empty-state">Loading wallet details.</div>
+  </section>
+
+  <section class="panel panel-highlight">
+    <div class="section-heading">
+      <h2>Needs Your Attention</h2>
+      <span id="pendingCount">0 pending</span>
+    </div>
+    <div id="pending" class="empty-state">Wallet is starting.</div>
+  </section>
+
+  <details class="panel panel-collapsible">
+    <summary class="section-heading">
+      <h2>Wallet Credentials</h2>
+      <span id="credentialCount">0 stored</span>
+    </summary>
+    <div id="credentials" class="empty-state">No stored credential yet.</div>
+  </details>
+
+  <details class="panel panel-collapsible">
+    <summary class="section-heading">
+      <h2>Recent Activity</h2>
+      <span id="activityCount">0 events</span>
+    </summary>
+    <div id="activityFeed" class="empty-state">Waiting for wallet events.</div>
+  </details>
+
+  <details class="panel panel-collapsible">
+    <summary class="section-heading">
+      <h2>Advanced</h2>
+      <span>Manual connection &amp; demo credential</span>
+    </summary>
+    <div class="stack advanced-stack">
+      <div>
+        <p class="empty-copy">Only needed if an app did not forward the connection automatically.</p>
+        <form id="invitationForm" class="stack">
+          <label class="input-label" for="invitationUrl">Paste invitation URL</label>
+          <textarea id="invitationUrl" required></textarea>
+          <button type="submit">Connect</button>
+        </form>
+      </div>
+      <div>
+        <p class="empty-copy">Request the demo credential from the secure issuer.</p>
+        <button id="requestCredentialButton" type="button">Request Credential</button>
+      </div>
+      <p id="message" class="message"></p>
+    </div>
+  </details>
+</body>
+
+</html>

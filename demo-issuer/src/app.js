@@ -9,6 +9,7 @@ const {
     CredentialsModule,
     WsOutboundTransport,
     Agent,
+    Key,
     ConsoleLogger, LogLevel,
     PeerDidNumAlgo,
     HttpOutboundTransport,
@@ -16,8 +17,11 @@ const {
     DifPresentationExchangeProofFormatService, JsonLdCredentialFormatService, JwaSignatureAlgorithm, DidDocumentBuilder,
     getEd25519VerificationKey2018, W3cCredentialsModule, CredentialEventTypes, SignatureSuiteRegistry,
     getEd25519VerificationKey2020, W3cJsonLdVerifiableCredential, CredentialState, W3cJsonLdVerifiablePresentation,
-    JsonTransformer, W3cCredentialService, WebDidResolver
+    JsonTransformer, W3cCredentialService, WebDidResolver, WalletKeyExistsError
 } = require('@credo-ts/core')
+const {
+  defaultDocumentLoader
+} = require('@credo-ts/core/build/modules/vc/data-integrity/libraries/documentLoader')
 const {
     AnonCredsCredentialFormatService,
     AnonCredsModule,
@@ -37,10 +41,92 @@ const {anoncreds} = require('@hyperledger/anoncreds-nodejs')
 const {AnonCredsRsModule} = require('@credo-ts/anoncreds')
 const sys_config = require('config');
 const {EnvelopeService} = require("@credo-ts/core/build/agent/EnvelopeService");
+const issuerDid = "did:web:secureissuer.solidcommunity.net:public";
+const defaultHolderDid = process.env.DEMO_USER_SUBJECT_DID || "did:web:bboi.solidcommunity.net:public";
+
+const ISSUER_DID =
+  'did:web:secureissuer.solidcommunity.net:public'
+
+const ISSUER_KID =
+  'did:web:secureissuer.solidcommunity.net:public#z6MkhesMp8iSdumBExtuozsz3PYfapPpQUCarQA5uLcRee4d'
+
+const issuerDidDocument = {
+  '@context': [
+    'https://www.w3.org/ns/did/v1',
+    'https://w3id.org/security/suites/ed25519-2018/v1'
+  ],
+  id: ISSUER_DID,
+  verificationMethod: [
+    {
+      id: ISSUER_KID,
+      type: 'Ed25519VerificationKey2018',
+      controller: ISSUER_DID,
+      publicKeyBase58: '4CcKDtU1JNGi8U4D8Rv9CHzfmF7xzaxEAPFA54eQjRHF'
+    }
+  ],
+  authentication: [ISSUER_KID],
+  assertionMethod: [ISSUER_KID]
+}
+
 const getGenesisTransaction = async (url) => {
     const response = await fetch(url)
     return await response.text()
 }
+
+
+function runAsyncTask(label, task) {
+    setImmediate(() => {
+        void Promise.resolve()
+            .then(task)
+            .catch((error) => {
+                console.error(`[${label}] ${error.stack || error.message}`)
+            })
+    })
+}
+
+async function buildIssuerDidDocument(agent, did) {
+    let ed25519Key
+
+    try {
+        ed25519Key = await agent.wallet.createKey({
+            keyType: KeyType.Ed25519,
+            privateKey: TypedArrayEncoder.fromString(sys_config.get('wallet.seed_private_key'))
+        })
+    } catch (error) {
+        if (!(error instanceof WalletKeyExistsError)) {
+            throw error
+        }
+
+        const [existingDid] = await agent.dids.getCreatedDids({method: 'web', did})
+        const existingVerificationMethod = existingDid?.didDocument?.verificationMethod?.find(
+            (verificationMethod) => verificationMethod.type === 'Ed25519VerificationKey2018' && verificationMethod.publicKeyBase58
+        )
+
+        if (!existingVerificationMethod?.publicKeyBase58) {
+            throw error
+        }
+
+        ed25519Key = Key.fromPublicKeyBase58(existingVerificationMethod.publicKeyBase58, KeyType.Ed25519)
+    }
+
+    const verificationMethod = getEd25519VerificationKey2018({
+        key: ed25519Key,
+        id: `${did}#${ed25519Key.fingerprint}`,
+        controller: did,
+    })
+
+    const didDocument = new DidDocumentBuilder(did)
+        .addVerificationMethod(verificationMethod)
+        .addAuthentication(verificationMethod.id)
+        .addAssertionMethod(verificationMethod.id)
+        .build()
+
+    return {
+        didDocument,
+        verificationMethodId: verificationMethod.id,
+    }
+}
+
 const initializeIssuerAgent = async (ledgerUrl, endPoint) => {
 
     const genesisTransactionsBCovrinTestNet = await getGenesisTransaction(ledgerUrl)
@@ -77,75 +163,55 @@ const initializeIssuerAgent = async (ledgerUrl, endPoint) => {
     // Initialize the agent
     await agent.initialize()
 
-    let did = "did:web:secureissuer.solidcommunity.net:public";
-    try {
+    const { didDocument, verificationMethodId } = await buildIssuerDidDocument(agent, issuerDid)
 
-        let builder = new DidDocumentBuilder(did);
-        const ed25519Key = await agent.wallet.createKey({
-            keyType: KeyType.Ed25519,
-            privateKey: TypedArrayEncoder.fromString(sys_config.get('wallet.seed_private_key'))
-        })
-        const ed25519VerificationMethod2018 = getEd25519VerificationKey2018({
-            key: ed25519Key,
-            id: `${did}#${ed25519Key.fingerprint}`,
-            controller: did,
-        })
+    console.log(JSON.stringify(didDocument))
 
-        builder.addVerificationMethod(ed25519VerificationMethod2018)
-        builder.addAuthentication(ed25519VerificationMethod2018.id)
-        builder.addAssertionMethod(ed25519VerificationMethod2018.id)
+    await agent.dids.import({
+        did: issuerDid,
+        didDocument,
+        overwrite: true,
+    })
 
-
-        console.log(JSON.stringify(builder.build()))
-
-        await agent.dids.import({
-            did,
-            didDocument: builder.build(),
-            options: {
-                keyType: KeyType.Ed25519,
-                privateKey: TypedArrayEncoder.fromString(sys_config.get('wallet.seed_private_key'))
-            }
-        })
-    } catch {
-        let didResp = await agent.dids.resolve(did);
-        await agent.dids.resolveDidDocument(did)
-
-        await agent.dids.import({
-            did,
-            didDocument: didResp.didDocument,
-            overwrite: true,
-            options: {
-                keyType: KeyType.Ed25519,
-                privateKey: TypedArrayEncoder.fromString(sys_config.get('wallet.seed_private_key'))
-            }
-        })
-        let created_dids = await agent.dids.getCreatedDids({method: 'web', did: did});
-        console.log(created_dids[0].didDocument, null, 2);
-        console.log("This is the Issuer Wallet, it has this DID: " + created_dids[0].did);
+    return {
+        agent,
+        verificationMethodId,
     }
-
-
-    return agent
 }
 
 let agent
+let startPromise
+let issuerVerificationMethodId
 
 async function startEverything() {
-    agent = await initializeIssuerAgent(sys_config.get('wallet.ledger_url'), sys_config.get('wallet.endpoint'));
+    if (agent) return agent
+    const issuerState = await initializeIssuerAgent(sys_config.get('wallet.ledger_url'), sys_config.get('wallet.endpoint'));
+    agent = issuerState.agent
+    issuerVerificationMethodId = issuerState.verificationMethodId
     await activateListener(agent)
+    return agent
+}
+
+async function ensureStarted() {
+    if (agent) return agent
+    if (!startPromise) {
+        startPromise = startEverything().catch((error) => {
+            startPromise = undefined
+            throw error
+        })
+    }
+
+    return startPromise
 }
 
 async function activateListener(agent) {
+    agent.events.on(ConnectionEventTypes.ConnectionStateChanged, ({payload}) => {
+        runAsyncTask('secure issuer connection state change', async () => {
+            if (payload.connectionRecord.state !== DidExchangeState.Completed) return
 
-    //agent.credentials.acceptRequest({credentialRecordId: '4efe6d7b-75f8-493e-8ab9-9445f7b017b6'})
-    agent.events.on(ConnectionEventTypes.ConnectionStateChanged, async ({payload}) => {
-        if (payload.connectionRecord.state === DidExchangeState.Completed ) {
             await agent.basicMessages.sendMessage(payload.connectionRecord.id, "Hello, we can start to communicate")
 
-            /* Start by sending an offer, if we want to release the credentials */
-
-            let con_rec = payload.connectionRecord.id;
-            let k = await agent.credentials.offerCredential({
+            await agent.credentials.offerCredential({
                 connectionId: payload.connectionRecord.id,
                 protocolVersion: 'v2',
                 credentialFormats: {
@@ -157,10 +223,10 @@ async function activateListener(agent) {
                             ],
                             id: 'https://example.com/credentials/321122',
                             type: ["VerifiableCredential", "ExampleDegreeCredential"],
-                            issuer: "did:web:secureissuer.solidcommunity.net:public",
+                            issuer: issuerDid,
                             issuanceDate: "2010-01-01T19:23:24Z",
                             credentialSubject: {
-                                "id": "did:web:bboi.solidcommunity.net:public",
+                                "id": defaultHolderDid,
                                 "degree": {
                                     "type": "ExampleBachelorDegree",
                                     "name": "Engineering"
@@ -174,16 +240,22 @@ async function activateListener(agent) {
                     }
                 }
             })
+        })
+    })
 
+    agent.events.on(CredentialEventTypes.CredentialStateChanged, ({payload}) => {
+        runAsyncTask('secure issuer credential state change', async () => {
+            if (payload.credentialRecord.state !== CredentialState.RequestReceived) return
 
-            agent.events.on(CredentialEventTypes.CredentialStateChanged, async ({payload}) => {
-                /* If the credential offer has been accepted, we have to release these credentials */
-                if (payload.credentialRecord.state === CredentialState.RequestReceived && payload.credentialRecord.connectionId === con_rec) {
-                    await agent.credentials.acceptRequest({credentialRecordId: payload.credentialRecord.id})
-                    //agent.credentials.acceptRequest({credentialRecordId: 'fe372c9a-2ac2-4fd1-9974-47baea4d1d17'})
+            await agent.credentials.acceptRequest({
+                credentialRecordId: payload.credentialRecord.id,
+                credentialFormats: {
+                    jsonld: {
+                        verificationMethod: issuerVerificationMethodId,
+                    }
                 }
             })
-        }
+        })
     })
 }
 
@@ -192,8 +264,10 @@ const {randomUUID} = require("crypto");
 
 const app = express();
 const PORT = 8080;
-startEverything().then(result => {
+ensureStarted().then(result => {
     /* Empty */
+}).catch((error) => {
+    console.error(error)
 })
 app.use(express.static('public'))
 var bodyParser = require('body-parser');
@@ -209,13 +283,11 @@ app.get('/', (req, res) => {
 
 app.get('/generateInvitation', async (req, res) => {
     res.status(200);
-    if (!agent) {
-        await startEverything();
-    }
+    await ensureStarted();
     const outOfBandRecord = await agent.oob.createInvitation({
         autoAcceptConnection: true,
         handshake: true,
-        invitationDid: "did:web:secureissuer.solidcommunity.net:public",
+        invitationDid: issuerDid,
     })
     const invitationUrl = outOfBandRecord.outOfBandInvitation.toUrl({domain: sys_config.get('wallet.endpoint')})
     let qrcode_png
@@ -238,6 +310,33 @@ app.listen(PORT, (error) => {
 function getAskarAnonCredsIndyModules(genesisTransactionsBCovrinTestNet) {
     const legacyIndyCredentialFormatService = new LegacyIndyCredentialFormatService()
     const legacyIndyProofFormatService = new LegacyIndyProofFormatService()
+
+    const customDocumentLoader = (agentContext) => {
+  const fallbackLoader = defaultDocumentLoader(agentContext)
+
+  return async (url) => {
+    if (url === ISSUER_DID) {
+      return {
+        contextUrl: null,
+        documentUrl: url,
+        document: issuerDidDocument
+      }
+    }
+
+    if (url === ISSUER_KID) {
+      return {
+        contextUrl: null,
+        documentUrl: url,
+        document: {
+          '@context': issuerDidDocument['@context'],
+          ...issuerDidDocument.verificationMethod[0]
+        }
+      }
+    }
+
+    return fallbackLoader(url)
+  }
+}
 
     return {
         connections: new ConnectionsModule({
@@ -287,6 +386,8 @@ function getAskarAnonCredsIndyModules(genesisTransactionsBCovrinTestNet) {
         askar: new AskarModule({
             ariesAskar,
         }),
-        w3cCredentials: new W3cCredentialsModule(),
+        w3cCredentials: new W3cCredentialsModule({
+  documentLoader: customDocumentLoader
+}),
     }
 }

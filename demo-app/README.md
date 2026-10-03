@@ -24,3 +24,9 @@ At this point you can re-run the server by changing the variable did on line 80 
 ```javascript
 did = "<Insert here the new DID, depending on where you hosted the DIDDocument>"
 ```
+
+When the CSS sends an encrypted resource with a `NonRepudiableOrigin`, the demo app now validates that material and stores it as RDF Turtle under `.internal/nro-audit/records`. The read-only query endpoint is:
+```bash
+GET /.internal/nro-audit/query?resource=<resource-url>&requesterDid=<did>
+```
+You can use one filter or both, and optionally add `messageHash=<sha256>` or `issuerDid=<did>`.

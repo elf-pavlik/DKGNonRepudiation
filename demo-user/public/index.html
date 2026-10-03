@@ -1,0 +1,63 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Patient Wallet</title>
+  <link rel="stylesheet" href="wallet.css">
+  <script defer src="wallet.js"></script>
+</head>
+
+<body>
+  <header class="app-header">
+    <div class="brand-mark" aria-hidden="true"><span></span></div>
+    <div>
+      <p class="eyebrow">Patient Credential Wallet</p>
+      <h1>Hospital Access Companion</h1>
+    </div>
+    <div id="readyStatus" class="status-pill">Starting</div>
+  </header>
+
+  <main class="shell">
+    <section class="panel invitation-panel">
+      <div>
+        <p class="eyebrow">New Connection</p>
+        <h2>Paste Invitation URL</h2>
+      </div>
+      <form id="invitationForm" class="invitation-form">
+        <input id="invitationUrl" name="invitationUrl" type="url" placeholder="https://... invitation URL" required>
+        <button type="submit">Connect</button>
+      </form>
+      <p id="formMessage" class="form-message"></p>
+    </section>
+
+    <section class="grid">
+      <section class="panel">
+        <div class="section-heading">
+          <h2>Credential Offers</h2>
+          <span id="offerCount">0 pending</span>
+        </div>
+        <div id="credentialOffers" class="stack empty-state">No credential offer yet.</div>
+      </section>
+
+      <section class="panel">
+        <div class="section-heading">
+          <h2>Proof Requests</h2>
+          <span id="proofCount">0 pending</span>
+        </div>
+        <div id="proofRequests" class="stack empty-state">No proof request yet.</div>
+      </section>
+    </section>
+
+    <section class="panel">
+      <div class="section-heading">
+        <h2>Wallet Activity</h2>
+        <span>Live</span>
+      </div>
+      <div id="activityFeed" class="activity-feed empty-state">Waiting for wallet events.</div>
+    </section>
+  </main>
+</body>
+
+</html>

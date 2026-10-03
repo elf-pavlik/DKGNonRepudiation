@@ -45,6 +45,7 @@ import {
   DidExchangeCompleteMessage,
 } from './messages'
 import { DidExchangeRole, DidExchangeState, HandshakeProtocol } from './models'
+import { ConnectionMetadataKeys } from './repository/ConnectionMetadataTypes'
 import { ConnectionService } from './services'
 import { createPeerDidFromServices, getDidDocumentForCreatedDid, routingToServices } from './services/helpers'
 
@@ -235,6 +236,18 @@ export class DidExchangeProtocol {
       autoAcceptConnection: outOfBandRecord.autoAcceptConnection,
       outOfBandId: outOfBandRecord.id,
     })
+
+    // message.didlong (the requester's long-form did:web) is only cryptographically verified
+    // against the signed did-doc attachment for the peer-did/GenesisDoc case handled in
+    // extractAttachedDidDocument - mirror that same condition here so we never persist an
+    // unverified, self-asserted DID as if it were authenticated.
+    if (
+      message.didlong &&
+      isValidPeerDid(didDocument.id) &&
+      getNumAlgoFromPeerDid(didDocument.id) === PeerDidNumAlgo.GenesisDoc
+    ) {
+      connectionRecord.metadata.set(ConnectionMetadataKeys.TheirPublicDid, { did: message.didlong })
+    }
 
     await this.updateState(messageContext.agentContext, DidExchangeRequestMessage.type, connectionRecord)
     this.logger.debug(`Process message ${DidExchangeRequestMessage.type.messageTypeUri} end`, connectionRecord)

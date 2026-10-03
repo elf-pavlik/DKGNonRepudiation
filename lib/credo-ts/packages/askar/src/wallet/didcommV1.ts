@@ -250,8 +250,17 @@ export function didcommV1UnpackWReturn(messagePackage: EncryptedMessage, recipie
   let cek: AskarKey | undefined
   try {
     cek = AskarKey.fromSecretBytes({ algorithm: KeyAlgs.Chacha20C20P, secretKey: payloadKey })
+    // The TTP's non-repudiation check (verifyRecoveryMaterial) needs the actual decrypted
+    // content to recompute and compare the message hash, not just the symmetric key - so this
+    // can no longer skip the aeadDecrypt step the way the "WReturn" name originally implied.
+    const message = cek.aeadDecrypt({
+      ciphertext: TypedArrayEncoder.fromBase64(messagePackage.ciphertext),
+      nonce: TypedArrayEncoder.fromBase64(messagePackage.iv),
+      tag: TypedArrayEncoder.fromBase64(messagePackage.tag),
+      aad: TypedArrayEncoder.fromString(messagePackage.protected),
+    })
     return {
-      plaintextMessage: "",
+      plaintextMessage: JsonEncoder.fromBuffer(message),
       senderKey,
       recipientKey: TypedArrayEncoder.toBase58(recipientKey.publicBytes),
       payloadKey

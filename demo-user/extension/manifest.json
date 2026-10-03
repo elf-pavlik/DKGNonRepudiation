@@ -1,0 +1,48 @@
+{
+  "manifest_version": 3,
+  "name": "Hospital Patient Wallet",
+  "version": "1.0.0",
+  "description": "Browser companion for the DIDComm patient wallet.",
+  "key": "MIIBIjANBgkqhkiG9w0BAQEFAAOCAQ8AMIIBCgKCAQEAvL/1U31gCf6kWPT1XW+WTQ07sOBlbGX0N2LBWzzNV6KrGLbPt4aWcwTr961WghYMb7yQH+tKo02iBxCjdaQWEJUXoRDuP6j807233VcbNrtkPSsabwYJEmSbzRLh5wyixZYHcplSaQvYK4YgVz9mOCFulLg7K+z776K5TDm2wflgQAqdiFdvDhp9A9HadH4T+fZjLUuBYHkzN2cr1OIyNDvc0RYwMUEGwJaWS/zl98gOAGOL3oRjU1fIRSpBYqJzMi3bnPjZBW0EjVRZF5j+9HcM6iXDNkOR97yO2PQXjEF+E6Z7uiLzciqZSjI1UU63pk391nMUehTXEYQPH4/LawIDAQAB",
+  "permissions": [
+    "storage"
+  ],
+  "background": {
+    "service_worker": "background.js"
+  },
+  "action": {
+    "default_title": "Patient Wallet",
+    "default_popup": "popup.html"
+  },
+  "host_permissions": [
+    "http://localhost:3007/*",
+    "http://127.0.0.1:3007/*"
+  ],
+  "externally_connectable": {
+    "matches": [
+      "http://localhost:8080/*",
+      "http://127.0.0.1:8080/*",
+      "http://localhost:8081/*",
+      "http://127.0.0.1:8081/*",
+      "http://localhost:8082/*",
+      "http://127.0.0.1:8082/*"
+    ]
+  },
+  "web_accessible_resources": [
+    {
+      "resources": [
+        "popup.html",
+        "popup.js",
+        "popup.css"
+      ],
+      "matches": [
+        "http://localhost:8080/*",
+        "http://127.0.0.1:8080/*",
+        "http://localhost:8081/*",
+        "http://127.0.0.1:8081/*",
+        "http://localhost:8082/*",
+        "http://127.0.0.1:8082/*"
+      ]
+    }
+  ]
+}

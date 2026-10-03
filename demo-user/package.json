@@ -33,12 +33,12 @@
     "web-did-resolver": "^2.0.27"
   },
   "devDependencies": {
-    "@credo-ts/anoncreds": "*",
+    "@credo-ts/anoncreds": "^0.5.3",
     "@credo-ts/askar": "file:./../lib/credo-ts-askar-0.5.3.tgz",
-    "@credo-ts/cheqd": "*",
+    "@credo-ts/cheqd": "^0.5.3",
     "@credo-ts/core": "file:./../lib/credo-ts-core-0.5.3.tgz",
-    "@credo-ts/indy-vdr": "*",
-    "@credo-ts/node": "*",
+    "@credo-ts/indy-vdr": "^0.5.3",
+    "@credo-ts/node": "^0.5.3",
     "@types/figlet": "^1.5.4",
     "@types/inquirer": "^8.2.6",
     "clear": "^0.1.0",

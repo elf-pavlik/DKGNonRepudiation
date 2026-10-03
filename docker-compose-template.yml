@@ -1,0 +1,139 @@
+x-demo-app: &demo-app
+  build:
+    context: .
+    dockerfile: demo-app/Dockerfile
+  depends_on:
+    - demo-user
+  extra_hosts:
+    - "host.docker.internal:host-gateway"
+  restart: unless-stopped
+
+services:
+  secure-issuer:
+    build:
+      context: .
+      dockerfile: demo-issuer/Dockerfile
+    container_name: secure-issuer
+    ports:
+      - "8083:8080"
+      - "3013:3011"
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    environment:
+      NODE_CONFIG: |
+        {
+          "wallet": {
+            "id": "<SECURE_ISSUER_WALLET_ID>",
+            "key": "<SECURE_ISSUER_WALLET_KEY>",
+            "seed_private_key": "<SECURE_ISSUER_32_CHAR_SEED_PRIVATE_KEY>",
+            "endpoint": "<SECURE_ISSUER_DIDCOMM_ENDPOINT>",
+            "ledger_url": "<LEDGER_GENESIS_URL>"
+          }
+        }
+      DEMO_USER_SUBJECT_DID: "<DEMO_USER_PUBLIC_DID>"
+      DOCKER_HOST_GATEWAY: "host.docker.internal"
+    restart: unless-stopped
+    networks:
+      - solid-demo-net
+
+  demo-user:
+    build:
+      context: .
+      dockerfile: demo-user/Dockerfile
+    container_name: demo-user
+    depends_on:
+      - secure-issuer
+    ports:
+      - "3006:3006"
+      - "3007:3007"
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    environment:
+      NODE_CONFIG: |
+        {
+          "wallet": {
+            "id": "<DEMO_USER_WALLET_ID>",
+            "key": "<DEMO_USER_WALLET_KEY>",
+            "seed_private_key": "<DEMO_USER_32_CHAR_SEED_PRIVATE_KEY>",
+            "endpoint": "<DEMO_USER_DIDCOMM_ENDPOINT>",
+            "ledger_url": "<LEDGER_GENESIS_URL>"
+          }
+        }
+      DOCKER_HOST_GATEWAY: "host.docker.internal"
+      SECURE_ISSUER_API_BASE: "http://secure-issuer:8080"
+      DEMO_USER_PUBLIC_DID: "<DEMO_USER_PUBLIC_DID>"
+    restart: unless-stopped
+    networks:
+      - solid-demo-net
+
+  demo-ttp:
+    build:
+      context: .
+      dockerfile: demo-ttp/Dockerfile
+    container_name: demo-ttp
+    ports:
+      - "8084:8082"
+      - "3070:3070"
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    environment:
+      NODE_CONFIG: |
+        {
+          "wallet": {
+            "id": "<DEMO_TTP_WALLET_ID>",
+            "key": "<DEMO_TTP_WALLET_KEY>",
+            "seed_private_key": "<DEMO_TTP_32_CHAR_SEED_PRIVATE_KEY>",
+            "endpoint": "<DEMO_TTP_DIDCOMM_ENDPOINT>",
+            "ledger_url": "<LEDGER_GENESIS_URL>"
+          }
+        }
+      DOCKER_HOST_GATEWAY: "host.docker.internal"
+    restart: unless-stopped
+    networks:
+      - solid-demo-net
+
+  demo-app-1:
+    <<: *demo-app
+    container_name: demo-app-1
+    ports:
+      - "8081:8080"
+      - "3011:3010"
+    environment:
+      NODE_CONFIG: |
+        {
+          "wallet": {
+            "id": "<DEMO_APP_1_WALLET_ID>",
+            "key": "<DEMO_APP_1_WALLET_KEY>",
+            "seed_private_key": "<DEMO_APP_1_32_CHAR_SEED_PRIVATE_KEY>",
+            "endpoint": "<DEMO_APP_1_DIDCOMM_ENDPOINT>",
+            "ledger_url": "<LEDGER_GENESIS_URL>"
+          }
+        }
+      DOCKER_HOST_GATEWAY: "host.docker.internal"
+    networks:
+      - solid-demo-net
+
+  demo-app-2:
+    <<: *demo-app
+    container_name: demo-app-2
+    ports:
+      - "8082:8080"
+      - "3012:3010"
+    environment:
+      NODE_CONFIG: |
+        {
+          "wallet": {
+            "id": "<DEMO_APP_2_WALLET_ID>",
+            "key": "<DEMO_APP_2_WALLET_KEY>",
+            "seed_private_key": "<DEMO_APP_2_32_CHAR_SEED_PRIVATE_KEY>",
+            "endpoint": "<DEMO_APP_2_DIDCOMM_ENDPOINT>",
+            "ledger_url": "<LEDGER_GENESIS_URL>"
+          }
+        }
+      DOCKER_HOST_GATEWAY: "host.docker.internal"
+    networks:
+      - solid-demo-net
+
+networks:
+  solid-demo-net:
+    external: true

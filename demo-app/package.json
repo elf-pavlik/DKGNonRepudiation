@@ -18,6 +18,7 @@
     "@hyperledger/indy-vdr-nodejs": "^0.2.2",
     "@sphereon/pex": "file:./../lib/sphereon-pex-3.3.3.tgz",
     "@sphereon/pex-models": "file:./../lib/sphereon-pex-models-2.2.4.tgz",
+    "@credo-ts/core": "file:./../lib/credo-ts-core-0.5.3.tgz",
     "@stablelib/chacha20poly1305": "^1.0.1",
     "body-parser": "^1.20.2",
     "chacha20": "^0.1.4",
@@ -31,12 +32,12 @@
     "web-did-resolver": "^2.0.27"
   },
   "devDependencies": {
-    "@credo-ts/anoncreds": "*",
+    "@credo-ts/anoncreds": "^0.5.3",
     "@credo-ts/askar": "file:./../lib/credo-ts-askar-0.5.3.tgz",
-    "@credo-ts/cheqd": "*",
+    "@credo-ts/cheqd": "^0.5.3",
     "@credo-ts/core": "file:./../lib/credo-ts-core-0.5.3.tgz",
-    "@credo-ts/indy-vdr": "*",
-    "@credo-ts/node": "*",
+    "@credo-ts/indy-vdr": "^0.5.3",
+    "@credo-ts/node": "^0.5.3",
     "@types/figlet": "^1.5.4",
     "@types/inquirer": "^8.2.6",
     "clear": "^0.1.0",
@@ -55,5 +56,25 @@
     "@sphereon/pex-models": "file:./../lib/sphereon-pex-models-2.2.4.tgz",
     "@credo-ts/core": "file:./../lib/credo-ts-core-0.5.3.tgz",
     "@credo-ts/askar": "file:./../lib/credo-ts-askar-0.5.3.tgz"
+  },
+  "overrides": {
+    "@credo-ts/anoncreds": {
+      "@credo-ts/core": "0.5.3"
+    },
+    "@credo-ts/askar": {
+      "@credo-ts/core": "0.5.3"
+    },
+    "@credo-ts/cheqd": {
+      "@credo-ts/core": "0.5.3"
+    },
+    "@credo-ts/didcomm": {
+      "@credo-ts/core": "0.5.3"
+    },
+    "@credo-ts/indy-vdr": {
+      "@credo-ts/core": "0.5.3"
+    },
+    "@credo-ts/node": {
+      "@credo-ts/core": "0.5.3"
+    }
   }
 }

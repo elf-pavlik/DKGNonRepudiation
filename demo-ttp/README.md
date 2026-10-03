@@ -21,3 +21,5 @@ At this point you can re-run the server by changing the variable did on line 87 
 ```javascript
 did = "<Insert here the new DID, depending on where you hosted the DIDDocument>"
 ```
+
+The service is also containerized. The Docker image starts the web API on port `8082` and the DIDComm inbound transport on port `3070`, automatically copies `config/custom.json` to `config/default.json` when needed, and includes the local `NonRepudiationContext.jsonld` required to validate the non-repudiation credential attached by the CSS.

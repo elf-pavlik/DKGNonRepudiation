@@ -1,46 +1,140 @@
 <!DOCTYPE html>
-<html>
+<html lang="en">
 
 <head>
   <meta charset="utf-8">
-  <title>VC Protocol Demo</title>
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Hospital VC Access Console</title>
   <script src="https://ajax.googleapis.com/ajax/libs/jquery/3.7.1/jquery.js"></script>
   <script defer src="main.js"></script>
   <link rel="stylesheet" href="my-demo.css" />
 </head>
 
 <body>
-  <header>
-    <h2 id="heading">Demo - App</h2>
+  <header class="app-header">
+    <div class="brand-mark" aria-hidden="true">
+      <span></span>
+    </div>
+    <div>
+      <p class="eyebrow">Secure Hospital Gateway</p>
+      <h1 id="heading">Clinical Records Access</h1>
+    </div>
+    <div class="header-right">
+      <span id="orgBadge" class="org-badge">Loading...</span>
+      <div class="header-status">
+        <span class="status-dot"></span>
+        DIDComm ready
+      </div>
+    </div>
   </header>
-  <p>This app can be used to send requests to the CSS server.
-  </p>
-  <div id="requests" class="panel">
-    <div class="row">
-      <label>Send Requests</label>
-      <div id="searchDiv">
-        <input id="searchBar" name="searchBar" type="text" value="http://localhost:3000/my-pod/test-folder/10mb.txt"></input>
-        <button id="getBtn" name="getBtn">GET</button>
-      </div>
-    </div>
-    <div class="row">
+
+  <main class="app-shell">
+    <section class="summary-strip" aria-label="Care network status">
       <div>
-        <pre id="responseArea" name="responseArea" rows="15" cols="70" disabled></pre>
+        <span class="summary-label">Department</span>
+        <strong>Emergency Care</strong>
       </div>
-    </div>
+      <div>
+        <span class="summary-label">Credential Flow</span>
+        <strong>SSI Wallet Approval</strong>
+      </div>
+      <div>
+        <span class="summary-label">Access Policy</span>
+        <strong>Visible After Verification</strong>
+      </div>
+    </section>
 
-    <div class="row">
-      <pre id="responseVP">
+    <section id="requests" class="panel">
+      <div class="panel-header">
+        <div>
+          <p class="eyebrow">Protected Resource</p>
+          <h2>Request Patient File</h2>
+        </div>
+      </div>
 
-      </pre>
-    </div>
-    <div id="invitation"></div>
+      <div class="request-bar">
+        <label for="searchBar">Resource URL</label>
+        <div id="searchDiv">
+          <input id="searchBar" name="searchBar" type="text" value="http://localhost:3002/my-pod/test-folder/dual-mode-resource.txt">
+          <button id="getBtn" name="getBtn" type="button">Request Access</button>
+        </div>
+      </div>
 
-    <div class="label-loader">Loading..</div>
-    <div class="container-loader">
-      <div class="loader"></div>
-    </div>
-  </div>
+      <div class="content-grid">
+        <section class="output-panel" aria-labelledby="response-title">
+          <div class="section-heading">
+            <div>
+              <h3 id="response-title">Protected Patient File</h3>
+              <p class="section-copy">The resource becomes visible only after SSI verification succeeds.</p>
+            </div>
+            <span id="resourceStateLabel">Locked until SSI approval</span>
+          </div>
+          <div id="resourceStage" class="resource-stage" data-state="locked">
+            <div class="resource-chrome">
+              <div class="resource-toolbar" aria-hidden="true">
+                <span></span>
+                <span></span>
+                <span></span>
+              </div>
+              <pre id="responseArea" name="responseArea"></pre>
+            </div>
+            <div id="resourceOverlay" class="resource-overlay">
+              <div class="resource-overlay-card">
+                <p id="resourceOverlayEyebrow" class="resource-overlay-eyebrow">Protected Resource</p>
+                <h4 id="resourceOverlayTitle">Resource locked</h4>
+                <p id="resourceOverlayMessage">The patient file stays hidden until the user logs in with SSI and accepts the credential exchange.</p>
+              </div>
+            </div>
+          </div>
+        </section>
+
+        <aside class="workflow-panel" aria-label="SSI verification flow">
+          <div class="section-heading">
+            <div>
+              <h3>SSI Verification</h3>
+              <p class="section-copy">Connect the wallet and approve the exchange to unlock the resource.</p>
+            </div>
+            <span>Wallet flow</span>
+          </div>
+          <div class="progress-track" aria-hidden="true">
+            <div id="workflowProgressFill" class="progress-fill"></div>
+          </div>
+          <div class="workflow-steps" aria-label="Access steps">
+            <div class="workflow-step is-current" data-step="request"><span>1</span>Request access</div>
+            <div class="workflow-step" data-step="login"><span>2</span>Log in with SSI</div>
+            <div class="workflow-step" data-step="approve"><span>3</span>Approve exchange</div>
+            <div class="workflow-step" data-step="view"><span>4</span>View resource</div>
+          </div>
+          <div id="invitation" hidden></div>
+          <button id="connectInvitationButton" class="invitation-connect-button" type="button" hidden>Log In with SSI</button>
+          <p id="invitationAssistMessage" class="invitation-helper" hidden></p>
+          <div class="label-loader">Loading...</div>
+          <div class="container-loader">
+            <div class="loader"></div>
+          </div>
+        </aside>
+      </div>
+
+      <section class="audit-panel" aria-labelledby="audit-title">
+        <div class="section-heading audit-panel-heading">
+          <div>
+            <p class="eyebrow">Internal Audit</p>
+            <h3 id="audit-title">NRO Graph Audit</h3>
+            <p class="section-copy">Only the NonRepudiableOrigin VC received from the CSS is visualized here for the selected protected resource.</p>
+          </div>
+          <div class="audit-panel-actions">
+            <span id="auditGraphCount" class="audit-count">No NRO graphs yet</span>
+            <button id="refreshAuditGraphButton" class="secondary-action audit-refresh-button" type="button">Refresh NRO</button>
+          </div>
+        </div>
+
+        <div class="audit-panel-body">
+          <p id="auditGraphStatus" class="audit-status">The saved graph of the NRO received from the CSS will appear here after a verified exchange.</p>
+          <div id="auditGraphRecords" class="audit-records" aria-live="polite"></div>
+        </div>
+      </section>
+    </section>
+  </main>
 </body>
 
 </html>
