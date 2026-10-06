@@ -277,7 +277,7 @@ const initializeIssuerAgent = async (ledgerUrl, endPoint) => {
 
 let agent
 
-const NON_REPUDIATION_CONTEXT_URL = 'https://secureapp.solidcommunity.net/public/NonRepudiationContext.jsonld';
+const NON_REPUDIATION_CONTEXT_URL = 'https://privateclinic.solidcommunity.net/public/NonRepudiationContext.jsonld';
 const NON_REPUDIATION_CONTEXT_PATH = [
     path.join(__dirname, '..', 'NonRepudiationContext.jsonld'),
     path.join(__dirname, '..', '..', 'NonRepudiationContext.jsonld'),

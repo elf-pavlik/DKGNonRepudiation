@@ -10,7 +10,7 @@ let issuer;
 $(document).ready(() => {
     $.ajax({
                     method: "GET",
-                    url: "http://localhost:8080/generateInvitation",
+                    url: "/generateInvitation",
                     success: async function (data) {
                         $("#invitation").html(data.url)
                         $("#invitation").append("<img src=\"" + data.qrcode + "\">");

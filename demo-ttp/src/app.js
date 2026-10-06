@@ -47,7 +47,7 @@ const {EnvelopeService} = require("@credo-ts/core/build/agent/EnvelopeService");
 const {defaultDocumentLoader} = require('@credo-ts/core/build/modules/vc/data-integrity/libraries/documentLoader');
 const {NrrGraphService} = require('./audit/NrrGraphService');
 
-const NON_REPUDIATION_CONTEXT_URL = 'https://secureapp.solidcommunity.net/public/NonRepudiationContext.jsonld';
+const NON_REPUDIATION_CONTEXT_URL = 'https://privateclinic.solidcommunity.net/public/NonRepudiationContext.jsonld';
 const NON_REPUDIATION_CONTEXT_PATH = [
     path.join(__dirname, '..', 'NonRepudiationContext.jsonld'),
     path.join(__dirname, '..', '..', 'NonRepudiationContext.jsonld'),
@@ -65,9 +65,9 @@ const nrrGraphService = new NrrGraphService({
 });
 
 const prompt = require('prompt-sync')();
-const TTP_DID = 'did:web:raw.githubusercontent.com:biagioboi:DKGNonRepudiation:main:demo-ttp:config';
-const APP_DID = 'did:web:privateclinic.solidcommunity.net:public';
-const APP_DID_KEY = 'did:key:z6Mkg4kRxcfvWfqTV86RdBKHjTks5thJe7R4xsGTs5zASrB7';
+const TTP_DID = process.env.TTP_DID || 'did:web:raw.githubusercontent.com:biagioboi:DKGNonRepudiation:main:demo-ttp:config';
+const APP_DID = process.env.APP_DID || 'did:web:privateclinic.solidcommunity.net:public';
+const APP_DID_KEY = process.env.APP_DID_KEY || 'did:key:z6Mkg4kRxcfvWfqTV86RdBKHjTks5thJe7R4xsGTs5zASrB7';
 const APP_VERIFICATION_METHOD_ID = `${APP_DID}#${APP_DID_KEY.slice('did:key:'.length)}`;
 
 const getGenesisTransaction = async (url) => {

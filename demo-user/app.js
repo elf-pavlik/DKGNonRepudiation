@@ -382,7 +382,7 @@ async function buildHolderDidDocument(agent, did) {
     const didDocument = new DidDocumentBuilder(did)
         .addService(new DidCommV1Service({
             id: '#inline-0',
-            serviceEndpoint: 'http://localhost:3006',
+            serviceEndpoint: sys_config.get('wallet.endpoint'),
             type: 'did-communication',
             recipientKeys: [verificationMethod.id],
             routingKeys: [],

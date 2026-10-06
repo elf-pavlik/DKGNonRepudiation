@@ -1,0 +1,16 @@
+{
+    "@context": {
+        "ex": "https://example.org/examples#",
+        "schema": "http://schema.org/",
+        "rdf": "http://www.w3.org/1999/02/22-rdf-syntax-ns#",
+        "NonRepudiableOrigin": "ex:NonRepudableOrigin",
+        "NonRepudiableDestination": "ex:NonRepudiableDestination",
+        "signedHash": "ex:signedHash",
+        "issuerData": "ex:issuerData",
+        "attributes": "ex:attributes",
+        "signature": "ex:signature",
+        "signatureCorrectnessProof": "ex:signatureCorrectnessProof",
+        "primaryProof": "ex:primaryProof",
+        "nonRevocationProof": "ex:nonRevocationProof"
+    }
+}

@@ -1,0 +1,46 @@
+{
+  "issuer": {
+    "did": "did:web:secureissuer.solidcommunity.net:public",
+    "endpoint": "http://secure-issuer:3011",
+    "fingerprint": "z6Mkp2Ph528qMXQXmhHVbaDbMrL15R6qiQ1gGvD19C8meUar",
+    "publicKeyBase58": "Aa8eUmtQ1yv4fCSnv1FkWkn1FqpzJWmKauJ5JvAkjFoU",
+    "didKey": "did:key:z6Mkp2Ph528qMXQXmhHVbaDbMrL15R6qiQ1gGvD19C8meUar",
+    "hostedAt": "https://secureissuer.solidcommunity.net/public/did.json"
+  },
+  "user": {
+    "did": "did:web:bboi.solidcommunity.net:public",
+    "endpoint": "http://demo-user:3006",
+    "fingerprint": "z6MksJS85b7ugR3Mr5FVfGMeL4HB25uvEjrn8zXYzptUrzTb",
+    "publicKeyBase58": "DrB5VLsULsYtjaQnyhPoUxjBCWe4prcRSycdAYvTwmgD",
+    "didKey": "did:key:z6MksJS85b7ugR3Mr5FVfGMeL4HB25uvEjrn8zXYzptUrzTb",
+    "hostedAt": "https://bboi.solidcommunity.net/public/did.json"
+  },
+  "app1": {
+    "did": "did:web:privateclinic.solidcommunity.net:public",
+    "endpoint": "http://demo-app-1:3010",
+    "fingerprint": "z6Mkw8gvjGdMLMN4RvX4kWZVSUYM2pWJHS3VdZ7NsKuUGG6R",
+    "publicKeyBase58": "HgRt92NuzosbKRgN4wbebNzMDFESsYo8wYCT33wTM3K3",
+    "didKey": "did:key:z6Mkw8gvjGdMLMN4RvX4kWZVSUYM2pWJHS3VdZ7NsKuUGG6R",
+    "hostedAt": "https://privateclinic.solidcommunity.net/public/did.json"
+  },
+  "app2": {
+    "did": "did:web:publichospital.solidcommunity.net:public",
+    "endpoint": "http://demo-app-2:3010",
+    "fingerprint": "z6MkrqvuwGXj6LPrrqbcgYbcQyKYp5WTzuB1yx68V52h4fpQ",
+    "publicKeyBase58": "DPfsM2HHknuPkLkuzydmZsmYzWEcb1vfHwBCeo4g9T32",
+    "didKey": "did:key:z6MkrqvuwGXj6LPrrqbcgYbcQyKYp5WTzuB1yx68V52h4fpQ",
+    "hostedAt": "https://publichospital.solidcommunity.net/public/did.json"
+  },
+  "ttp": {
+    "did": "did:web:raw.githubusercontent.com:biagioboi:DKGNonRepudiation:main:demo-ttp:config",
+    "endpoint": "http://demo-ttp:3070",
+    "fingerprint": "z6Mku4Cjz6zvNSxhLjM3hjAnPrh5N59HLBsjyuxvmLAMD243",
+    "publicKeyBase58": "FbwhPrkV2uUEEEWM2ACwYm95YVsRvJdPHu3zw4CLHoGf",
+    "didKey": "did:key:z6Mku4Cjz6zvNSxhLjM3hjAnPrh5N59HLBsjyuxvmLAMD243",
+    "hostedAt": "https://raw.githubusercontent.com/biagioboi/DKGNonRepudiation/main/demo-ttp/config/did.json"
+  },
+  "css": {
+    "did": "did:web:raw.githubusercontent.com:biagioboi:CommunitySolidServer:main",
+    "endpoint": "http://solid-css:3015"
+  }
+}

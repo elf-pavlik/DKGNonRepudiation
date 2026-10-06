@@ -41,14 +41,19 @@ const {anoncreds} = require('@hyperledger/anoncreds-nodejs')
 const {AnonCredsRsModule} = require('@credo-ts/anoncreds')
 const sys_config = require('config');
 const {EnvelopeService} = require("@credo-ts/core/build/agent/EnvelopeService");
-const issuerDid = "did:web:secureissuer.solidcommunity.net:public";
+const issuerDid = process.env.ISSUER_DID || "did:web:secureissuer.solidcommunity.net:public";
 const defaultHolderDid = process.env.DEMO_USER_SUBJECT_DID || "did:web:bboi.solidcommunity.net:public";
 
-const ISSUER_DID =
-  'did:web:secureissuer.solidcommunity.net:public'
+const ISSUER_DID = issuerDid
+
+const ISSUER_VERIFICATION_FRAGMENT =
+  process.env.ISSUER_VERIFICATION_FRAGMENT || 'z6MkhesMp8iSdumBExtuozsz3PYfapPpQUCarQA5uLcRee4d'
+
+const ISSUER_PUBLIC_KEY_BASE58 =
+  process.env.ISSUER_PUBLIC_KEY_BASE58 || '4CcKDtU1JNGi8U4D8Rv9CHzfmF7xzaxEAPFA54eQjRHF'
 
 const ISSUER_KID =
-  'did:web:secureissuer.solidcommunity.net:public#z6MkhesMp8iSdumBExtuozsz3PYfapPpQUCarQA5uLcRee4d'
+  `${ISSUER_DID}#${ISSUER_VERIFICATION_FRAGMENT}`
 
 const issuerDidDocument = {
   '@context': [
@@ -61,7 +66,7 @@ const issuerDidDocument = {
       id: ISSUER_KID,
       type: 'Ed25519VerificationKey2018',
       controller: ISSUER_DID,
-      publicKeyBase58: '4CcKDtU1JNGi8U4D8Rv9CHzfmF7xzaxEAPFA54eQjRHF'
+      publicKeyBase58: ISSUER_PUBLIC_KEY_BASE58
     }
   ],
   authentication: [ISSUER_KID],

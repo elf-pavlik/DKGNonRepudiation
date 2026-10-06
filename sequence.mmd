@@ -1,0 +1,61 @@
+sequenceDiagram
+    participant U as User<br/>(Wallet + own SSI agent)
+    participant A as App<br/>(client + own SSI agent)
+    participant C as CSS Server<br/>VcDidCommHttpHandler /<br/>AgentInitializer / AcpReader /<br/>PermissionBasedAuthorizer
+    participant T as TTP<br/>(Trusted Third Party<br/>+ own SSI agent)
+
+    rect rgb(230, 240, 255)
+    note over U,A: DIDComm Exchange
+    U->>A: DIDComm Exchange
+    note over U: App authorized (for the User)
+    note over A: User authorized (for the App)
+    end
+
+    rect rgb(255, 250, 230)
+    note over U,C: HTTPS
+    A->>C: HTTP GET resource(DID_a, DID_i, DID_u)
+    C-->>A: 401 Unauthorized<br/>WWW-Authenticate: didcomm proofRequests=...
+    note right of C: createDidCommAuthenticateHeader()<br/>(nonce + presentationExchange proof request)
+
+    note over U,A: DIDComm — App collects the presentation from the User's wallet
+    A->>U: Forward proof request<br/>(App ↔ Wallet exchange)
+    U-->>A: Verifiable Presentation<br/>(agent / issuer / client DIDs,<br/>proof over challenge)
+
+    A->>C: [HTTP] GET resource<br/>(header: vp = ...)
+    C->>C: validNonceAndDomain(vp)
+    C->>C: VpChecker.verifyNew(vp) →<br/>Credentials[agent, issuer, client]
+    note over A: App authorized (for the Verifier)
+    note over U: User authorized (for the Verifier)
+    C->>C: AcpReader: matcher on agent/issuer/client<br/>→ acl:Read and/or acl:NRRead<br/>PermissionBasedAuthorizer: mode granted
+
+    alt Read — 3a. Only acl:Read granted → serve directly
+        C-->>A: 200 OK + resource
+    end
+    end
+
+    rect rgb(255, 240, 240)
+    note over U,T: NonRepudiationRead — 3b. Only acl:NRRead granted → CSS encrypts for the TTP escrow and attaches NRO
+    note over C,T: DIDComm (only once - key rotation)
+    C->>T: DIDComm Exchange
+    C->>C: Fetch resource content,<br/>encrypt it with fresh sym key ⇒<br/>{ encryptedMessage }<br/>encrypt sym key with TTP-CSS<br/>shared secret ⇒<br/>{encryptedSymKey}
+    C-->>A: [HTTP] encryptedMessage,<br/>encryptedSymKey,<br/>hash(resource, keyForDecrypt)<br/>NRO
+    note right of C: attachNonRepudiationMaterial():<br/>NRO = signatureFromCSS on<br/>hash(resource, keyForDecrypt)
+
+    note over U,C: 4. App signs the receipt (NRR) — then picks ONE of the two release paths below
+    A->>A: Create and sign NRR: hash(resource, keyForDecrypt) (NRR)
+
+    alt 5a. Release via CSS (App stays with the server it already talked to)
+        A->>C: [HTTP] NRR
+        C->>C: verifySignedResource(NRR) → match hash /<br/>requesterDid / requestedResource<br/>against the pending context
+        C-->>A: [HTTP] keyForDecrypt
+        note right of C: jwsGraphService.storeVerifiedJws(...)<br/>(CSS-side non-repudiation evidence)
+    else 5b. Release via TTP (App goes straight to the escrow — alternative path)
+        A->>T: [HTTP] checkResource(encryptedResource [with NRO], NRR,<br/>requestedResource, requesterDid)
+        T->>T: Verify NRR Signature + NRO Consistency<br/>(hashCredential / signatureFromCSS),<br/>then ask the TTP to decrypt the encryptedSymKey
+        T-->>A: [HTTP] keyForDecrypt
+    end
+
+    note over U,A: 6. Deliver resource to the user
+    A->>A: Decrypt encryptedMessage locally<br/>with keyForDecrypt → plaintext resource
+    A-->>U: Deliver resource to the User<br/>(app-specific)
+    end

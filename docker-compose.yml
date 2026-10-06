@@ -1,0 +1,224 @@
+# Dev demo compose for the DKG non-repudiation protocol.
+#
+# Secrets here are generated dev keys (see did-hosting/seeds.json and
+# did-hosting/generated.json) and intentionally committed so the demo is
+# reproducible.
+#
+# did:web resolution is served by the `did-host` container over HTTPS. It holds
+# network aliases for every did:web host this demo uses, so the other containers
+# resolve those DIDs locally. The dev CA is self-signed, hence
+# NODE_TLS_REJECT_UNAUTHORIZED=0 on the Node services.
+
+x-demo-app: &demo-app
+  build:
+    context: .
+    dockerfile: demo-app/Dockerfile
+  depends_on:
+    - demo-user
+  extra_hosts:
+    - "host.docker.internal:host-gateway"
+  restart: unless-stopped
+
+services:
+  did-host:
+    image: node:22-alpine
+    container_name: did-host
+    command: node /srv/server.js
+    volumes:
+      - ./did-hosting/dids:/dids:ro
+      - ./did-hosting/certs:/certs:ro
+      - ./did-hosting/server.js:/srv/server.js:ro
+    networks:
+      solid-demo-net:
+        aliases:
+          - secureissuer.solidcommunity.net
+          - bboi.solidcommunity.net
+          - privateclinic.solidcommunity.net
+          - publichospital.solidcommunity.net
+          - raw.githubusercontent.com
+    restart: unless-stopped
+
+  solid-css:
+    build:
+      context: ../biagioboi-CommunitySolidServer
+    image: biagioboi-css:latest
+    container_name: solid-css
+    command: -c config/file-vc.json -f data -b http://localhost:3002/ -p 3002
+    ports:
+      - "3002:3002"
+      - "3015:3015"
+    depends_on:
+      - demo-ttp
+      - did-host
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    environment:
+      NODE_TLS_REJECT_UNAUTHORIZED: "0"
+    restart: unless-stopped
+    networks:
+      - solid-demo-net
+
+  secure-issuer:
+    build:
+      context: .
+      dockerfile: demo-issuer/Dockerfile
+    container_name: secure-issuer
+    depends_on:
+      - did-host
+    ports:
+      - "8083:8080"
+      - "3013:3011"
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    environment:
+      NODE_CONFIG: |
+        {
+          "wallet": {
+            "id": "secure-issuer-wallet",
+            "key": "mCW9rZEwlmAKIndjV0XU-uklZaPwrLII",
+            "seed_private_key": "f19b1a7a78435e25ab0c8e5079c62e9f",
+            "endpoint": "http://secure-issuer:3011",
+            "ledger_url": "http://test.bcovrin.vonx.io/genesis"
+          }
+        }
+      ISSUER_DID: "did:web:secureissuer.solidcommunity.net:public"
+      ISSUER_VERIFICATION_FRAGMENT: "z6Mkp2Ph528qMXQXmhHVbaDbMrL15R6qiQ1gGvD19C8meUar"
+      ISSUER_PUBLIC_KEY_BASE58: "Aa8eUmtQ1yv4fCSnv1FkWkn1FqpzJWmKauJ5JvAkjFoU"
+      DEMO_USER_SUBJECT_DID: "did:web:bboi.solidcommunity.net:public"
+      DOCKER_HOST_GATEWAY: "host.docker.internal"
+      NODE_TLS_REJECT_UNAUTHORIZED: "0"
+    restart: unless-stopped
+    networks:
+      - solid-demo-net
+
+  demo-user:
+    build:
+      context: .
+      dockerfile: demo-user/Dockerfile
+    container_name: demo-user
+    depends_on:
+      - secure-issuer
+      - did-host
+    ports:
+      - "3006:3006"
+      - "3007:3007"
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    environment:
+      NODE_CONFIG: |
+        {
+          "wallet": {
+            "id": "demo-user-wallet",
+            "key": "3SxeI8EH35CJHok9_jGF6MvFlYAfEGZ7",
+            "seed_private_key": "9bde739e3b694d7be0522262c9349520",
+            "endpoint": "http://demo-user:3006",
+            "ledger_url": "http://test.bcovrin.vonx.io/genesis"
+          }
+        }
+      DOCKER_HOST_GATEWAY: "host.docker.internal"
+      SECURE_ISSUER_API_BASE: "http://secure-issuer:8080"
+      DEMO_USER_PUBLIC_DID: "did:web:bboi.solidcommunity.net:public"
+      NODE_TLS_REJECT_UNAUTHORIZED: "0"
+    restart: unless-stopped
+    networks:
+      - solid-demo-net
+
+  demo-ttp:
+    build:
+      context: .
+      dockerfile: demo-ttp/Dockerfile
+    container_name: demo-ttp
+    depends_on:
+      - did-host
+    ports:
+      - "8084:8082"
+      - "3070:3070"
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    environment:
+      NODE_CONFIG: |
+        {
+          "wallet": {
+            "id": "demo-ttp-wallet",
+            "key": "gXdDxEKvO_ZiuB1nbc6TgDfWBbHa_qE0",
+            "seed_private_key": "40318fb61bf22ba987c1216dadb299b8",
+            "endpoint": "http://demo-ttp:3070",
+            "ledger_url": "http://test.bcovrin.vonx.io/genesis"
+          }
+        }
+      TTP_DID: "did:web:raw.githubusercontent.com:biagioboi:DKGNonRepudiation:main:demo-ttp:config"
+      APP_DID: "did:web:privateclinic.solidcommunity.net:public"
+      APP_DID_KEY: "did:key:z6Mkw8gvjGdMLMN4RvX4kWZVSUYM2pWJHS3VdZ7NsKuUGG6R"
+      DOCKER_HOST_GATEWAY: "host.docker.internal"
+      NODE_TLS_REJECT_UNAUTHORIZED: "0"
+    restart: unless-stopped
+    networks:
+      - solid-demo-net
+
+  demo-app-1:
+    <<: *demo-app
+    container_name: demo-app-1
+    depends_on:
+      - demo-user
+      - did-host
+    ports:
+      - "8081:8080"
+      - "3011:3010"
+    environment:
+      NODE_CONFIG: |
+        {
+          "wallet": {
+            "id": "demo-app-1-wallet",
+            "key": "YxCVNbypifUbaal5WX_XGGtmK2biVjOj",
+            "seed_private_key": "6d344176060e010a1f1e8638e843a591",
+            "endpoint": "http://demo-app-1:3010",
+            "ledger_url": "http://test.bcovrin.vonx.io/genesis"
+          }
+        }
+      APP_DID: "did:web:privateclinic.solidcommunity.net:public"
+      APP_DID_VERIFICATION_FRAGMENT: "z6Mkw8gvjGdMLMN4RvX4kWZVSUYM2pWJHS3VdZ7NsKuUGG6R"
+      APP_HOLDER_DID: "did:web:bboi.solidcommunity.net:public"
+      APP_ISSUER_DID: "did:web:secureissuer.solidcommunity.net:public"
+      APP_ORG_NAME: "Private Clinic"
+      APP_ORG_EYEBROW: "Private Clinic Gateway"
+      DOCKER_HOST_GATEWAY: "host.docker.internal"
+      NODE_TLS_REJECT_UNAUTHORIZED: "0"
+    networks:
+      - solid-demo-net
+
+  demo-app-2:
+    <<: *demo-app
+    container_name: demo-app-2
+    depends_on:
+      - demo-user
+      - did-host
+    ports:
+      - "8082:8080"
+      - "3012:3010"
+    environment:
+      NODE_CONFIG: |
+        {
+          "wallet": {
+            "id": "demo-app-2-wallet",
+            "key": "eEnQNFsZQ2lcaioH7RNmhE0Oa0fQW5bl",
+            "seed_private_key": "28299e67ebc906ecdc93585a78be3211",
+            "endpoint": "http://demo-app-2:3010",
+            "ledger_url": "http://test.bcovrin.vonx.io/genesis"
+          }
+        }
+      APP_DID: "did:web:publichospital.solidcommunity.net:public"
+      APP_DID_VERIFICATION_FRAGMENT: "z6MkrqvuwGXj6LPrrqbcgYbcQyKYp5WTzuB1yx68V52h4fpQ"
+      APP_HOLDER_DID: "did:web:bboi.solidcommunity.net:public"
+      APP_ISSUER_DID: "did:web:secureissuer.solidcommunity.net:public"
+      APP_ORG_NAME: "Public Hospital"
+      APP_ORG_EYEBROW: "Public Hospital Gateway"
+      APP_THEME_PRIMARY: "#7c3a0a"
+      APP_THEME_PRIMARY_STRONG: "#5f2c07"
+      DOCKER_HOST_GATEWAY: "host.docker.internal"
+      NODE_TLS_REJECT_UNAUTHORIZED: "0"
+    networks:
+      - solid-demo-net
+
+networks:
+  solid-demo-net:
+    external: true

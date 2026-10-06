@@ -1,0 +1,27 @@
+{
+  "issuer": {
+    "walletId": "secure-issuer-wallet",
+    "walletKey": "mCW9rZEwlmAKIndjV0XU-uklZaPwrLII",
+    "seed": "f19b1a7a78435e25ab0c8e5079c62e9f"
+  },
+  "user": {
+    "walletId": "demo-user-wallet",
+    "walletKey": "3SxeI8EH35CJHok9_jGF6MvFlYAfEGZ7",
+    "seed": "9bde739e3b694d7be0522262c9349520"
+  },
+  "app1": {
+    "walletId": "demo-app-1-wallet",
+    "walletKey": "YxCVNbypifUbaal5WX_XGGtmK2biVjOj",
+    "seed": "6d344176060e010a1f1e8638e843a591"
+  },
+  "app2": {
+    "walletId": "demo-app-2-wallet",
+    "walletKey": "eEnQNFsZQ2lcaioH7RNmhE0Oa0fQW5bl",
+    "seed": "28299e67ebc906ecdc93585a78be3211"
+  },
+  "ttp": {
+    "walletId": "demo-ttp-wallet",
+    "walletKey": "gXdDxEKvO_ZiuB1nbc6TgDfWBbHa_qE0",
+    "seed": "40318fb61bf22ba987c1216dadb299b8"
+  }
+}
