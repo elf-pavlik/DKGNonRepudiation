@@ -5,6 +5,8 @@ server:
   log_level: info
 
 distributor:
+  # Default is 2048, which truncated every payload over 2 KB. Must be >= VERA_PAYLOAD_MAX_LENGTH.
+  max_attribute_bytes: 65536
   receivers:
     otlp:
       protocols:
