@@ -1,0 +1,10 @@
+{
+  "@context": {
+    "acp": "https://www.w3.org/ns/solid/acp#",
+    "id": "@id",
+    "ourProtocol": "https://bboi.solidcommunity.net/definition/ourProtocol#",
+    "wrappedVP": "ourProtocol:wrapperOf",
+    "type": "@type"
+   
+  }
+}

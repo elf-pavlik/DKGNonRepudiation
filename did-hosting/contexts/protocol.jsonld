@@ -1,0 +1,25 @@
+{
+  "@context": {
+    "acp": "https://www.w3.org/ns/solid/acp#",
+    "id": "@id",
+    "ourProtocol": "https://bboi.solidcommunity.net/definition/ourProtocol#",
+    "definedACPContext": "ourProtocol:context",
+    "type": "@type",
+    "ACPContext": {
+      "@id": "acp:Context", 
+      "@type": "@id",
+      "@context": {
+        "@version": 1.1,
+        "id": "@id",
+        "type": "@type",
+        "attribute": "acp:attribute",
+        "target": "acp:target",
+        "agent": "acp:agent",
+        "creator": "acp:creator",
+        "owner": "acp:owner",
+        "client": "acp:client",
+        "issuer": "acp:issuer"
+      }
+    }
+  }
+}

@@ -47,7 +47,7 @@ did-host runs an HTTPS server and holds network aliases for each DID hostname. T
 2. Connect an app to the wallet. Open http://localhost:8081 or http://localhost:8082, click "Log In with SSI" and paste the app invitation into the wallet.
 3. Request a resource. The field defaults to http://localhost:3002/my-pod/test-folder/dual-mode-resource.txt. Click "Request Access".
 4. Approve the proof request in the wallet.
-5. Read the result. demo-app-1 receives an encrypted resource, signs a receipt and gets the key back. demo-app-2 receives the plaintext directly.
+5. Read the result. demo-app-1 receives an encrypted resource, signs a receipt and gets the key back. It then offers two release paths (the two branches of `sequence.mmd`): **Release via Solid server** sends the receipt to the CSS (5a) and **Release via TTP** sends it to the TTP escrow (5b). demo-app-2 receives the plaintext directly.
 
 The app's "NRO Graph Audit" panel reads /.internal/nro-audit/query. The CSS keeps its own audit records at http://localhost:3002/.internal/jws-audit/query.
 
@@ -55,7 +55,84 @@ The resource /my-pod/test-folder/dual-mode-resource.txt grants non-repudiable re
 
 ## Driving with chrome-devtools MCP
 
-The chrome-devtools MCP server is configured in ~/.pi/agent/mcp.json and connects to a local Chrome. take_snapshot returns the page as text, so an agent can read and drive the UI without images. Start from the service URLs above and use the flow in the previous section.
+The chrome-devtools MCP server is configured in ~/.pi/agent/mcp.json and connects to a local Chrome. `take_snapshot` returns the page as text, so an agent can read and drive the UI without images. The steps below replay `sequence.mmd` end to end; they were verified against a `docker compose up -d --build` from a clean state.
+
+### Prerequisites
+
+- **Chrome for the MCP server.** On Linux `chrome-devtools-mcp` only looks for `/opt/google/chrome/chrome`. On NixOS the easiest fix is a symlink to Nix's Chromium, or pass it explicitly in `~/.pi/agent/mcp.json`:
+
+  ```json
+  {
+    "mcpServers": {
+      "chrome-devtools": {
+        "command": "npx",
+        "args": ["-y", "chrome-devtools-mcp@latest",
+                 "--executablePath", "/etc/profiles/per-user/$USER/bin/chromium",
+                 "--isolated"]
+      }
+    }
+  }
+  ```
+
+  Run `/reload` after changing `mcp.json`. `--isolated` gives each session its own temporary profile so parallel sessions do not fight over the Chrome user-data dir.
+- **JSON-LD contexts on did-host.** The wrapped-VPR/VP signing dereferences `https://bboi.solidcommunity.net/public/schemas/2024/{presexchange,wrappedvp,wrappedvpr,protocol}.jsonld`. If any of these is missing from `did-hosting/dids/...` the wallet never receives the proof request and the app logs `jsonld.InvalidUrl: Dereferencing a URL did not result in a valid JSON-LD object`. `did-hosting/generate.js` copies them from `did-hosting/contexts/`; check with:
+
+  ```bash
+  docker exec demo-app-1 sh -c 'for u in presexchange wrappedvp wrappedvpr protocol; do \
+    curl -sk -o /dev/null -w "$u %{http_code}\n" \
+    "https://bboi.solidcommunity.net/public/schemas/2024/$u.jsonld"; done'
+  ```
+
+### Tabs
+
+Use two pages: **page 1** for the issuer/apps and **page 2** for the wallet (`http://localhost:3007`). Snapshot element `uid`s change on every re-render, so select elements by text or `data-*` attribute in `evaluate_script` instead of by uid. One quirk: the wallet buttons (and sometimes the app buttons) refuse the MCP `click` with *"element did not become interactive"*; dispatch the click from `evaluate_script` instead. `wait_for` accepts a list of texts and resolves when any appears.
+
+### 1. Issue the credential (README step 1)
+
+1. page 1 -> `http://localhost:8083`; read the invitation URL from the page:
+
+   ```js
+   () => document.body.innerText.match(/https?:\/\/secure-issuer:3011\?oob=[A-Za-z0-9_\-]+/)[0]
+   ```
+
+2. page 2 -> `http://localhost:3007`; fill `#invitationUrl` with that URL and click the `Connect` button, then `wait_for(["1 pending"])`.
+3. Click `button[data-action="accept-credential"]` and `wait_for(["Credential received and stored"])`.
+
+### 2. Private Clinic - non-repudiable read (sequence 2, 3b, 4, 5a/5b)
+
+1. page 1 -> `http://localhost:8081`. Click the `Request Access` button. This issues the `GET` that returns `401` and parses the CSS proof request; `wait_for(["Wallet invitation ready"])`.
+2. Click `Log In with SSI` and read its invitation:
+
+   ```js
+   () => [...document.querySelectorAll('button')]
+     .find(b => b.textContent.trim() === 'Log In with SSI').dataset.invitationUrl
+   ```
+
+3. Paste that into the wallet (`#invitationUrl` + `Connect`), then `wait_for(["Share Credential"])` and click `button[data-action="accept-proof"]`.
+4. Back on page 1 the resource arrives encrypted with the `NonRepudiableOrigin` NRO. Choose a release path:
+   - **`Release via Solid server`** (5a): the app sends the signed receipt (NRR) to the CSS, which stores it at `/.internal/jws-audit/query` and returns the key.
+   - **`Release via TTP`** (5b): the app sends the receipt to `demo-ttp/checkResource`, which verifies it and releases the key; the CSS audit does **not** grow.
+5. `wait_for(["ACCESS GRANTED"])`. The decrypted body is the first `<pre>` on the page.
+
+### 3. Public Hospital - plain read (sequence 3a)
+
+1. page 1 -> `http://localhost:8082`; repeat steps 1-3 above with the same wallet. Here the CSS grants plain `acl:Read`, so after the wallet shares the proof the `200` response is served directly: `wait_for(["ACCESS GRANTED"])` and no NRO graph is saved.
+
+### Verify the evidence
+
+The app-side non-repudiation evidence (one `NonRepudiableOrigin` per NRRead):
+
+```bash
+curl -s 'http://localhost:8081/.internal/nro-audit/query?resource=http%3A%2F%2Flocalhost%3A3002%2Fmy-pod%2Ftest-folder%2Fdual-mode-resource.txt'
+```
+
+The CSS-side receipt (`NonRepudiationDestination`) is only present when 5a was used:
+
+```bash
+curl -s http://localhost:3002/.internal/jws-audit/query
+```
+
+In the NRRead exchange the `signedHash` in the CSS `NonRepudiableOrigin` NRO and in the app's `NonRepudiationDestination` NRR must match.
 
 ## Notice
 

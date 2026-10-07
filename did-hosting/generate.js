@@ -137,6 +137,9 @@ const cssDoc = JSON.parse(fs.readFileSync(path.join(ROOT, 'css-did.json'), 'utf8
 const contextCopies = [
   ['NonRepudiationContext.jsonld', 'privateclinic.solidcommunity.net/public/NonRepudiationContext.jsonld'],
   ['presexchange.jsonld', 'bboi.solidcommunity.net/public/schemas/2024/presexchange.jsonld'],
+  ['wrappedvp.jsonld', 'bboi.solidcommunity.net/public/schemas/2024/wrappedvp.jsonld'],
+  ['wrappedvpr.jsonld', 'bboi.solidcommunity.net/public/schemas/2024/wrappedvpr.jsonld'],
+  ['protocol.jsonld', 'bboi.solidcommunity.net/public/schemas/2024/protocol.jsonld'],
 ];
 for (const [src, dest] of contextCopies) {
   const target = path.join(DIDS_DIR, dest);
