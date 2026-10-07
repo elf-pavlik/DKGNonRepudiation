@@ -77,6 +77,19 @@ views {
       notes """
         The app generates an **out-of-band invitation** on page load; the wallet connects on demand.
 
+        Captured OOB invitation payload (base64 `oob` query parameter decoded):
+
+        ```json
+        {
+          "@type": "https://didcomm.org/out-of-band/1.1/invitation",
+          "@id": "<uuid>",
+          "label": "SecureIssuer",
+          "accept": ["didcomm/aip1", "didcomm/aip2;env=rfc19"],
+          "handshake_protocols": ["https://didcomm.org/didexchange/1.1", "https://didcomm.org/connections/1.0"],
+          "services": ["did:web:secureissuer.solidcommunity.net:public"]
+        }
+        ```
+
         > [!NOTE]
         > After the exchange both sides have authorized each other:
         >
@@ -89,13 +102,13 @@ views {
       technology "HTTPS"
       description "Declares the agent/issuer/client triple the ACR is matched against."
       notes """
-        Headers sent by the app:
+        Headers sent by the app (captured live, demo-app-1 → solid-css):
 
         ```
         didvc: true
-        agent:  <holder DID>
-        client: <app DID>
-        issuer: <issuer DID>
+        agent:  did:web:bboi.solidcommunity.net:public
+        client: did:web:privateclinic.solidcommunity.net:public
+        issuer: did:web:secureissuer.solidcommunity.net:public
         ```
 
         > [!NOTE]
@@ -117,6 +130,41 @@ views {
         > [!IMPORTANT]
         > The header value is `didcomm proofRequest="<base64url JSON VPR>"` — singular
         > *proofRequest*, not `proofRequests=`.
+
+        Captured response header (live run):
+
+        ```
+        www-authenticate: didcomm proofRequest="eyJAY29udGV4dCI6WyJodHRwczovL2Jib2ku…"
+        ```
+
+        Decoded payload (input_descriptors shortened):
+
+        ```json
+        {
+          "@context": ["https://bboi.solidcommunity.net/public/schemas/2024/presexchange.jsonld"],
+          "type": ["VerifiablePresentationRequest"],
+          "presentation_definition": {
+            "id": "32f54163-7166-48f1-93d8-ff217bdb0653",
+            "input_descriptors": [{ "id": "unisa_student", "constraints": { "fields": [{ "path": ["$.credentialSubject.degree", "$.credentialSubject.claims.degree"] }] } }],
+            "format": {
+              "ldp_vc": { "proof_type": ["JsonWebSignature2020", "Ed25519Signature2018", "EcdsaSecp256k1Signature2019", "RsaSignature2018"] },
+              "ldp_vp": { "proof_type": ["Ed25519Signature2018"] }
+            },
+            "requestACP": {
+              "type": ["ACPContext"],
+              "target": "http://localhost:3002/my-pod/test-folder/dual-mode-resource.txt",
+              "owner": "did:web:raw.githubusercontent.com:biagioboi:CommunitySolidServer:main",
+              "issuer": "did:web:secureissuer.solidcommunity.net:public",
+              "client": "did:web:privateclinic.solidcommunity.net:public",
+              "agent": "did:web:bboi.solidcommunity.net:public"
+            }
+          },
+          "options": {
+            "challenge": "JSciO4rWx1aKr08ypPMHFQ==",
+            "domain": "https://bboi.solidcommunity.net/definition/ourProtocol#test"
+          }
+        }
+        ```
         """
     }
 
@@ -137,6 +185,23 @@ views {
       notes """
         The wallet shares the **ExampleDegreeCredential** as a presentation over the challenge.
 
+        Captured VP JSON (outer wrapper, as carried by the `vp` header — credentials/proof shortened):
+
+        ```json
+        {
+          "@context": [
+            "https://www.w3.org/2018/credentials/v1",
+            "https://bboi.solidcommunity.net/public/schemas/2024/wrappedvp.jsonld"
+          ],
+          "id": "https://example.com/wrappedVP/321122",
+          "type": ["VerifiablePresentation"],
+          "wrappedVP": {
+            "@context": ["https://www.w3.org/2018/credentials/v1", "https://identity.foundation/presentation-exchange/submission/v1", "…"],
+            "…": "verifiableCredential + Ed25519Signature2018 proof over challenge=nonce"
+          }
+        }
+        ```
+
         > [!TIP]
         > In the demo UI this is the wallet's *Proof Request → **Share Credential*** step.
         """
@@ -154,6 +219,12 @@ views {
 
         > [!NOTE]
         > At this point the app is authorized *for the Verifier* and the user *for the Verifier*.
+
+        Captured wire header (live run):
+
+        ```
+        vp: {"@context":["https://www.w3.org/2018/credentials/v1","https://bboi.solidcommunity.net/public/schemas/2024/wrappedvp.jsonld"],"id":"https://example.com/wrappedVP/321122","type":["VerifiablePresentation"],"wrappedVP":{"@context":[…],"…":"…"}}
+        ```
         """
     }
 
@@ -186,12 +257,33 @@ views {
 
             1. fetch the resource content
             2. encrypt it with a **fresh symKey** → DIDComm JWE (`encrypted_key` targets the TTP)
-            3. `messageHash = sha256(resource content)`
+            3. `messageHash = sha256(resource content)` — captured live:
+               `f970288ecdc17639e1d606a14dbb451d5a335eb244c4e5de6851165b011a66a1`, which is
+               exactly `sha256(plaintext resource)` (verified offline against the resource body)
             4. keep symKey + pending context server-side (hash → connectionId / requesterDid / requestedResource)
             5. attach the NRO material:
                * `hash` — plain message hash
                * `hashCredential` — **NonRepudiableOrigin** VC (CSS-signed, subject=requesterDid, signedHash)
                * `signatureFromCSS` — JWS over the message hash
+
+            Captured `encryptedresource` envelope (long fields cut with `…`):
+
+            ```json
+            {
+              "protected": {
+                "enc": "xchacha20poly1305_ietf",
+                "typ": "JWM/1.0",
+                "alg": "Anoncrypt",
+                "recipients": [{ "encrypted_key": "RHks…", "header": { "kid": "Ferq24pUZzxFhgKF7qpmBd4v7BaigFeTzSM63s27TbNs" } }]
+              },
+              "ciphertext": "…",
+              "iv": "-WCx7jXkdDeawvIx",
+              "tag": "_5Lypn7YP1HuyR8-2XlAxw",
+              "hash": "f970288ecdc17639e1d606a14dbb451d5a335eb244c4e5de6851165b011a66a1",
+              "hashCredential": { "@context": ["https://www.w3.org/2018/credentials/v1", "https://privateclinic.solidcommunity.net/public/NonRepudiationContext.jsonld"], "id": "https://example.com/credentials/1872", "type": ["VerifiableCredential", "NonRepudiableOrigin"], "issuer": "did:web:raw.githubusercontent.com:biagioboi:CommunitySolidServer:main", "credentialSubject": { "id": "did:web:bboi.solidcommunity.net:public" }, "signedHash": "f970288e…", "proof": { "type": "Ed25519Signature2018", "proofPurpose": "assertionMethod", "jws": "eyJhbGciOiJFZERTQSIsImI2NCI6ZmFsc2UsImNyaXQiOlsiYjY0Il19..…" } },
+              "signatureFromCSS": "eyJhbGciOiJFZERTQSIsImI2NCI6ZmFsc2UsImNyaXQiOlsiYjY0Il19..…"
+            }
+            ```
 
             > [!WARNING]
             > No key is returned to the app yet — it stays **escrowed at the CSS** until a
@@ -205,28 +297,37 @@ views {
       }
     }
 
-    app -> app "Create and sign NRR" {
-      notes """
-        Step **4** — the app signs the receipt as a **NonRepudiationDestination** VC:
-
-        * issuer = app DID
-        * credentialSubject: id = requesterDid, requestedResource, signedHash = messageHash
-
-        > [!NOTE]
-        > One of the two release paths below is then picked; the NRR is the only thing
-        > that unlocks the escrowed key.
-        """
-    }
-
     alt 'release path' {
       when '5a — release via CSS' {
         app -> css "GET resource (header: signedresource = [NRR JSON])" {
           technology "HTTPS"
           notes """
+            Step **4** — the app signs the receipt as a **NonRepudiationDestination** VC
+            (issuer = app DID, subject = requesterDid, requestedResource, signedHash = messageHash)
+            and only then picks a release path — the NRR is the only thing that unlocks the escrowed key.
+
             * `verifySignedResource(NRR)` — verify the VC signature, then match
               **signedHash / requesterDid / requestedResource** against the pending context
             * `jwsGraphService.storeVerifiedJws(...)` — CSS-side non-repudiation evidence
             * escrowed key + pending context deleted
+
+            Captured NRR (`signedresource` header value, stored in the CSS audit — proof shortened):
+
+            ```json
+            {
+              "@context": ["https://www.w3.org/2018/credentials/v1", "https://privateclinic.solidcommunity.net/public/NonRepudiationContext.jsonld"],
+              "id": "urn:uuid:f65ea059-7110-4c2f-88b4-82e87bdf17c4",
+              "type": ["VerifiableCredential", "NonRepudiationDestination"],
+              "issuer": "did:web:privateclinic.solidcommunity.net:public",
+              "issuanceDate": "2026-10-07T00:11:50.10Z",
+              "credentialSubject": {
+                "id": "did:web:bboi.solidcommunity.net:public",
+                "requestedResource": "http://localhost:3002/my-pod/test-folder/dual-mode-resource.txt",
+                "signedHash": "f970288ecdc17639e1d606a14dbb451d5a335eb244c4e5de6851165b011a66a1"
+              },
+              "proof": { "type": "Ed25519Signature2018", "proofPurpose": "assertionMethod", "jws": "eyJhbGciOiJFZERTQS…" }
+            }
+            ```
 
             > [!TIP]
             > The CSS audit endpoint is `GET /detail/.internal/jws-audit/query` (demo: `:3002`).
@@ -246,6 +347,9 @@ views {
           technology "HTTPS"
           description "The app goes straight to the escrow; the CSS never sees the NRR."
           notes """
+            Step **4** — the NRR it sends is the same **NonRepudiationDestination** VC the
+            app signed in 5a (subject = requesterDid, requestedResource, signedHash = messageHash).
+
             TTP-side checks:
 
             * verify the **NRR signature**
