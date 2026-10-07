@@ -25,6 +25,7 @@ docker-compose.yml builds the modified Community Solid Server from the sibling c
 | demo-ttp | http://localhost:8084 | trusted third party |
 | demo-app-1 | http://localhost:8081 | Private Clinic, non-repudiable read |
 | demo-app-2 | http://localhost:8082 | Public Hospital, plain read and write |
+| tempo | http://localhost:3200 | trace store and MCP server |
 
 ## DIDs
 
@@ -133,6 +134,27 @@ curl -s http://localhost:3002/.internal/jws-audit/query
 ```
 
 In the NRRead exchange the `signedHash` in the CSS `NonRepudiableOrigin` NRO and in the app's `NonRepudiationDestination` NRR must match.
+
+## Observability
+
+Every demo party exports OpenTelemetry traces to Tempo. The compose file turns this on without application code changes.
+
+- `tempo` stores the traces. The OTLP receivers are on 4317 (gRPC) and 4318 (HTTP). The query API and the MCP server are on 3200.
+- `otel-node-modules` installs `@opentelemetry/auto-instrumentations-node` into the `otel-node` volume once, then exits.
+- Each party mounts that volume at `/otel` and starts with `NODE_OPTIONS=--require /otel/register.js`, so the SDK loads at startup.
+- The `x-otel` anchor in docker-compose.yml holds the shared settings. `OTEL_EXPORTER_OTLP_ENDPOINT` points at `http://tempo:4318`.
+
+Reporting services: secure-issuer, demo-user, demo-ttp, demo-app-1, demo-app-2, solid-css. did-host is not instrumented.
+
+The Tempo MCP server is enabled in `tempo/tempo.yaml` and listens at `http://localhost:3200/api/mcp`. It is registered as `tempo` in `~/.pi/agent/mcp.json`, so an agent session can query traces with TraceQL. Run `/reload` after changing the server list.
+
+Query without an agent:
+
+```bash
+curl -s 'http://localhost:3200/api/search?q=%7B%7D&limit=20'
+```
+
+If the `otel-node` volume is missing, `docker compose up -d otel-node-modules` reinstalls it. To instrument a new service, add `<<: *otel`, `OTEL_SERVICE_NAME`, the `otel-node:/otel:ro` mount, and a dependency on `otel-node-modules` with `condition: service_completed_successfully`.
 
 ## Notice
 
