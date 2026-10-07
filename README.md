@@ -88,6 +88,20 @@ The chrome-devtools MCP server is configured in ~/.pi/agent/mcp.json and connect
 
 Use two pages: **page 1** for the issuer/apps and **page 2** for the wallet (`http://localhost:3007`). Snapshot element `uid`s change on every re-render, so select elements by text or `data-*` attribute in `evaluate_script` instead of by uid. One quirk: the wallet buttons (and sometimes the app buttons) refuse the MCP `click` with *"element did not become interactive"*; dispatch the click from `evaluate_script` instead. `wait_for` accepts a list of texts and resolves when any appears.
 
+Wallet-form quirk: the MCP `fill`/`click` on the *"Paste Invitation URL"* form can silently no-op (both calls report success, but `#invitationUrl` ends up empty and no `POST /api/invitations` is sent). Submit it in one `evaluate_script` instead:
+
+```js
+() => { const i = document.querySelector('#invitationUrl');
+  i.value = '<invitation URL>'; // embed with JSON.stringify(url), not via `args`
+  i.dispatchEvent(new Event('input', { bubbles: true }));
+  i.dispatchEvent(new Event('change', { bubbles: true }));
+  i.closest('form').requestSubmit(); }
+```
+
+Gotchas:
+- `evaluate_script` `args` are **element UIDs**, not free-form values — pass values by string-interpolating them into the `function` body (e.g. `` `i.value = ${JSON.stringify(url)}` ``).
+- Headings like *"Credential Offer"* / *"Proof Request"* are always present in the snapshot; wait for state counters such as `"1 pending"` or activity text (`"Credential received and stored"`, `"Share Credential"`) instead.
+
 ### 1. Issue the credential (README step 1)
 
 1. page 1 -> `http://localhost:8083`; read the invitation URL from the page:
@@ -96,7 +110,7 @@ Use two pages: **page 1** for the issuer/apps and **page 2** for the wallet (`ht
    () => document.body.innerText.match(/https?:\/\/secure-issuer:3011\?oob=[A-Za-z0-9_\-]+/)[0]
    ```
 
-2. page 2 -> `http://localhost:3007`; fill `#invitationUrl` with that URL and click the `Connect` button, then `wait_for(["1 pending"])`.
+2. page 2 -> `http://localhost:3007`; submit the invitation via the `evaluate_script` wallet-form snippet under *Tabs*, then `wait_for(["1 pending"])`.
 3. Click `button[data-action="accept-credential"]` and `wait_for(["Credential received and stored"])`.
 
 ### 2. Private Clinic - non-repudiable read (sequence 2, 3b, 4, 5a/5b)
@@ -109,7 +123,7 @@ Use two pages: **page 1** for the issuer/apps and **page 2** for the wallet (`ht
      .find(b => b.textContent.trim() === 'Log In with SSI').dataset.invitationUrl
    ```
 
-3. Paste that into the wallet (`#invitationUrl` + `Connect`), then `wait_for(["Share Credential"])` and click `button[data-action="accept-proof"]`.
+3. Paste that into the wallet with the same `evaluate_script` submit as step 1, then `wait_for(["1 pending"])`, `wait_for(["Share Credential"])` and click `button[data-action="accept-proof"]`.
 4. Back on page 1 the resource arrives encrypted with the `NonRepudiableOrigin` NRO. Choose a release path:
    - **`Release via Solid server`** (5a): the app sends the signed receipt (NRR) to the CSS, which stores it at `/.internal/jws-audit/query` and returns the key.
    - **`Release via TTP`** (5b): the app sends the receipt to `demo-ttp/checkResource`, which verifies it and releases the key; the CSS audit does **not** grow.
@@ -141,10 +155,12 @@ Every demo party exports OpenTelemetry traces to Tempo. The compose file turns t
 
 - `tempo` stores the traces. The OTLP receivers are on 4317 (gRPC) and 4318 (HTTP). The query API and the MCP server are on 3200.
 - `otel-node-modules` installs `@opentelemetry/auto-instrumentations-node` into the `otel-node` volume once, then exits.
-- Each party mounts that volume at `/otel` and starts with `NODE_OPTIONS=--require /otel/register.js`, so the SDK loads at startup.
+- Each party mounts that volume at `/otel`, mounts `otel/register.js` at `/otel/register.js`, and starts with `NODE_OPTIONS=--require /otel/register.js`, so the SDK loads at startup. `otel/register.js` mirrors the default register and adds HTTP header capture.
 - The `x-otel` anchor in docker-compose.yml holds the shared settings. `OTEL_EXPORTER_OTLP_ENDPOINT` points at `http://tempo:4318`.
 
 Reporting services: secure-issuer, demo-user, demo-ttp, demo-app-1, demo-app-2, solid-css. did-host is not instrumented.
+
+Captured HTTP headers become span attributes under `http.request.header.*` and `http.response.header.*`. Request headers: `agent`, `client`, `issuer`, `didvc`, `vp`, `signedresource`, `x-forwarded-host`, `x-forwarded-proto`. Response headers: `www-authenticate`, `encryptedresource`, `keyfordecrypt`. In `@opentelemetry/instrumentation-http` 0.223 the option nests under `server` and `client`; the flat `{ requestHeaders, responseHeaders }` shape of older versions is ignored. `vp` and `signedresource` carry base64 JSON and can run to several KB per span, so trim the lists if Tempo storage or MCP output grows too much.
 
 The Tempo MCP server is enabled in `tempo/tempo.yaml` and listens at `http://localhost:3200/api/mcp`. It is registered as `tempo` in `~/.pi/agent/mcp.json`, so an agent session can query traces with TraceQL. Run `/reload` after changing the server list.
 

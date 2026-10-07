@@ -56,7 +56,7 @@ services:
     image: node:22-bookworm
     container_name: otel-node-modules
     command: >-
-      sh -c 'test -f /otel/register.js || (cd /otel && npm init -y >/dev/null 2>&1 && npm install --no-audit --no-fund @opentelemetry/auto-instrumentations-node >/dev/null 2>&1 && echo "require(\"@opentelemetry/auto-instrumentations-node/register\");" > /otel/register.js)'
+      sh -c 'test -d /otel/node_modules/@opentelemetry/auto-instrumentations-node || (cd /otel && npm init -y >/dev/null 2>&1 && npm install --no-audit --no-fund @opentelemetry/auto-instrumentations-node)'
     volumes:
       - otel-node:/otel
     restart: "no"
@@ -104,7 +104,8 @@ services:
       OTEL_SERVICE_NAME: "solid-css"
       NODE_TLS_REJECT_UNAUTHORIZED: "0"
     volumes:
-      - otel-node:/otel:ro
+      - otel-node:/otel
+      - ./otel/register.js:/otel/register.js:ro
     restart: unless-stopped
     networks:
       - solid-demo-net
@@ -125,7 +126,8 @@ services:
     extra_hosts:
       - "host.docker.internal:host-gateway"
     volumes:
-      - otel-node:/otel:ro
+      - otel-node:/otel
+      - ./otel/register.js:/otel/register.js:ro
     environment:
       <<: *otel
       OTEL_SERVICE_NAME: "secure-issuer"
@@ -167,7 +169,8 @@ services:
     extra_hosts:
       - "host.docker.internal:host-gateway"
     volumes:
-      - otel-node:/otel:ro
+      - otel-node:/otel
+      - ./otel/register.js:/otel/register.js:ro
     environment:
       <<: *otel
       OTEL_SERVICE_NAME: "demo-user"
@@ -205,7 +208,8 @@ services:
     extra_hosts:
       - "host.docker.internal:host-gateway"
     volumes:
-      - otel-node:/otel:ro
+      - otel-node:/otel
+      - ./otel/register.js:/otel/register.js:ro
     environment:
       <<: *otel
       OTEL_SERVICE_NAME: "demo-ttp"
@@ -242,7 +246,8 @@ services:
       - "8081:8080"
       - "3011:3010"
     volumes:
-      - otel-node:/otel:ro
+      - otel-node:/otel
+      - ./otel/register.js:/otel/register.js:ro
     environment:
       <<: *otel
       OTEL_SERVICE_NAME: "demo-app-1"
@@ -281,7 +286,8 @@ services:
       - "8082:8080"
       - "3012:3010"
     volumes:
-      - otel-node:/otel:ro
+      - otel-node:/otel
+      - ./otel/register.js:/otel/register.js:ro
     environment:
       <<: *otel
       OTEL_SERVICE_NAME: "demo-app-2"
