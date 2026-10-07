@@ -1,0 +1,290 @@
+specification {
+  element actor { notation "Person"; style { shape person } }
+  element system { }
+  element service { style { shape component } }
+
+  relationship didcomm { technology "DIDComm" }
+  relationship http { technology "HTTPS" }
+
+  tag nrread
+  tag escrow
+  tag evidence
+}
+
+model {
+  user = actor "User" {
+    title "Patient — Wallet + own SSI agent"
+    summary "The patient's credential wallet (demo-user)."
+    description """
+      Holds the **ExampleDegreeCredential** issued by the secure issuer and approves
+      proof requests coming from the apps over DIDComm.
+      """
+  }
+
+  app = system "App" {
+    title "App — client + own SSI agent"
+    summary "Demo application (Private Clinic / Public Hospital replica)."
+    description """
+      Presents the user's Verifiable Presentation to the CSS, signs the
+      **NonRepudiationDestination** receipt (NRR) and decrypts the resource locally.
+      """
+  }
+
+  css = system "CSS Server" {
+    title "Community Solid Server (modified)"
+    summary "Pod and resource owner: VcDidCommHttpHandler, AgentInitializer, AcpReader, PermissionBasedAuthorizer."
+    description """
+      Issues the **NonRepudiableOrigin** NRO, escrows the symmetric key and releases it
+      only against a verified **NRR** (`jwsGraphService.storeVerifiedJws` keeps the evidence).
+      """
+  }
+
+  ttp = system "TTP" {
+    title "Trusted Third Party"
+    summary "Escrow holder and independent key releaser (demo-ttp)."
+    description """
+      Receives the encrypted resource (JWE for its own recipient key), verifies NRR/NRO
+      consistency on `checkResource` and releases `keyForDecrypt` as an alternative to the CSS.
+      """
+  }
+
+  // Canonical relationships (used by the context view; the dynamic view lists steps explicitly)
+  user -[didcomm]-> app "connects via OOB invitation"
+  user -[didcomm]-> app "returns Verifiable Presentation"
+  app -[didcomm]-> user "forwards (signed/wrapped) proof request"
+  app -[http]-> css "requests resource (didvc/agent/client/issuer headers)"
+  app -[http]-> css "retries with vp header, then signedresource header"
+  css -[http]-> app "401 didcomm proofRequest / 200 resource / encryptedresource / keyfordecrypt"
+  css -[didcomm]-> ttp "reserved escrow channel"
+  app -[http]-> ttp "checkResource (encryptedMessage, nrr)"
+  ttp -[http]-> app "keyForDecrypt"
+  app -> user "delivers plaintext resource (app-specific)"
+}
+
+views {
+  dynamic view nr-read-flow {
+    variant sequence
+
+    title "Non-repudiable read — VERA protocol"
+    description """
+      End-to-end walk of the non-repudiable read flow documented in `sequence.mmd`.
+      Participants mirror the containers in `docker-compose.yml`:
+      **demo-user** (wallet), **demo-app-1/2** (apps), **solid-css**, **demo-ttp**.
+      """
+
+    user -> app "DIDComm Exchange" {
+      technology "DIDComm"
+      notes """
+        The app generates an **out-of-band invitation** on page load; the wallet connects on demand.
+
+        > [!NOTE]
+        > After the exchange both sides have authorized each other:
+        >
+        > * App authorized *(for the User)*
+        > * User authorized *(for the App)*
+        """
+    }
+
+    app -> css "GET resource" {
+      technology "HTTPS"
+      description "Declares the agent/issuer/client triple the ACR is matched against."
+      notes """
+        Headers sent by the app:
+
+        ```
+        didvc: true
+        agent:  <holder DID>
+        client: <app DID>
+        issuer: <issuer DID>
+        ```
+
+        > [!NOTE]
+        > These are plain HTTP *headers*, not DIDComm — the old `DID_a/DID_i/DID_u`
+        > labels in `sequence.mmd` were renamed to the actual wire format.
+        """
+    }
+
+    css -> app "401 Unauthorized — didcomm proofRequest" {
+      technology "HTTPS"
+      description "WWW-Authenticate: didcomm proofRequest=[base64url JSON VPR]"
+      notes """
+        `createDidcommAuthenticateHeader()` builds the challenge:
+
+        * a fresh **nonce** (challenge)
+        * a **presentationExchange** proof request (VPR) on the `presexchange.jsonld` context
+        * the **nonce → domain** mapping is kept server-side
+
+        > [!IMPORTANT]
+        > The header value is `didcomm proofRequest="<base64url JSON VPR>"` — singular
+        > *proofRequest*, not `proofRequests=`.
+        """
+    }
+
+    app -> user "Forward (signed/wrapped) proof request" {
+      technology "DIDComm"
+      description "present-proof v2; the app wraps and signs the VPR before forwarding."
+      notes """
+        > [!NOTE]
+        > Signing the wrapped VPR (`Ed25519Signature2018`) canonicalizes JSON-LD, so
+        > `wrappedvp.jsonld` / `wrappedvpr.jsonld` / `protocol.jsonld` must be reachable
+        > (served by `did-host` in this demo).
+        """
+    }
+
+    user -> app "Verifiable Presentation" {
+      technology "DIDComm"
+      description "agent / issuer / client DIDs, proof over challenge=nonce"
+      notes """
+        The wallet shares the **ExampleDegreeCredential** as a presentation over the challenge.
+
+        > [!TIP]
+        > In the demo UI this is the wallet's *Proof Request → **Share Credential*** step.
+        """
+    }
+
+    app -> css "GET resource (header: vp = [JSON VP])" {
+      technology "HTTPS"
+      notes """
+        CSS-side verification (`VpChecker`):
+
+        * `validNonceAndDomain(vp)` — challenge + domain match
+        * `VpChecker.verifyNew(vp)` → **Credentials[agent, issuer, client]**
+        * `AcpReader` matcher on agent/issuer/client → `acl:Read` and/or `acl:NRRead`
+        * `PermissionBasedAuthorizer` — mode granted
+
+        > [!NOTE]
+        > At this point the app is authorized *for the Verifier* and the user *for the Verifier*.
+        """
+    }
+
+    alt 'access decision' {
+      when '3a — only acl:Read granted' {
+        css -> app "200 OK + plaintext resource" {
+          technology "HTTPS"
+          notes """
+            Short path — no encryption, no receipts, no audit records.
+
+            > [!TIP]
+            > **demo-app-2 (Public Hospital)** exercises this branch on
+            > `dual-mode-resource.txt` (plain read, no NRO graphs).
+            """
+        }
+      }
+      else '3b — only acl:NRRead granted' {
+        css -> ttp "reserved DIDComm escrow channel" {
+          technology "DIDComm"
+          notes """
+            > [!NOTE]
+            > Opened on first use and **reused** (no key rotation); the CSS encrypts the
+            > fresh symKey for the **TTP's recipient keys** resolved from its DID document.
+            """
+        }
+        css -> app "encryptedresource: JWE + hash + NRO material" {
+          technology "HTTPS"
+          notes """
+            `buildNonRepudiableRelease()` + `attachNonRepudiationMaterial()`:
+
+            1. fetch the resource content
+            2. encrypt it with a **fresh symKey** → DIDComm JWE (`encrypted_key` targets the TTP)
+            3. `messageHash = sha256(resource content)`
+            4. keep symKey + pending context server-side (hash → connectionId / requesterDid / requestedResource)
+            5. attach the NRO material:
+               * `hash` — plain message hash
+               * `hashCredential` — **NonRepudiableOrigin** VC (CSS-signed, subject=requesterDid, signedHash)
+               * `signatureFromCSS` — JWS over the message hash
+
+            > [!WARNING]
+            > No key is returned to the app yet — it stays **escrowed at the CSS** until a
+            > valid NRR is verified.
+
+            > [!IMPORTANT]
+            > Older docs saying `hash(resource, keyForDecrypt)` are wrong — see step 3:
+            > the hash covers the **plaintext resource only**.
+            """
+        }
+      }
+    }
+
+    app -> app "Create and sign NRR" {
+      notes """
+        Step **4** — the app signs the receipt as a **NonRepudiationDestination** VC:
+
+        * issuer = app DID
+        * credentialSubject: id = requesterDid, requestedResource, signedHash = messageHash
+
+        > [!NOTE]
+        > One of the two release paths below is then picked; the NRR is the only thing
+        > that unlocks the escrowed key.
+        """
+    }
+
+    alt 'release path' {
+      when '5a — release via CSS' {
+        app -> css "GET resource (header: signedresource = [NRR JSON])" {
+          technology "HTTPS"
+          notes """
+            * `verifySignedResource(NRR)` — verify the VC signature, then match
+              **signedHash / requesterDid / requestedResource** against the pending context
+            * `jwsGraphService.storeVerifiedJws(...)` — CSS-side non-repudiation evidence
+            * escrowed key + pending context deleted
+
+            > [!TIP]
+            > The CSS audit endpoint is `GET /detail/.internal/jws-audit/query` (demo: `:3002`).
+            """
+        }
+        css -> app "keyfordecrypt header" {
+          technology "HTTPS"
+          notes """
+            > [!NOTE]
+            > The key release is **single-use**: `lastKeyForMsgEncryption[hash]` is deleted
+            > once the NRR is accepted.
+            """
+        }
+      }
+      else '5b — release via TTP' {
+        app -> ttp "checkResource (encryptedMessage, nrr)" {
+          technology "HTTPS"
+          description "The app goes straight to the escrow; the CSS never sees the NRR."
+          notes """
+            TTP-side checks:
+
+            * verify the **NRR signature**
+            * verify **NRO consistency** (hashCredential / signatureFromCSS vs hash)
+            * decrypt the `encrypted_key` (JWE recipient) with the TTP's key
+
+            > [!IMPORTANT]
+            > Only `{ encryptedResource, nrr }` is sent — `requestedResource` and
+            > `requesterDid` live inside the NRR subject, not as separate parameters.
+            """
+        }
+        ttp -> app "keyForDecrypt" {
+          technology "HTTPS"
+          notes """
+            > [!TIP]
+            > In the demo UI choose **Release via TTP**; the CSS audit then does **not**
+            > grow, which is how the two paths can be told apart.
+            """
+        }
+      }
+    }
+
+    app -> user "Deliver resource to the User" {
+      notes """
+        Step **6** — `keyForDecrypt` is used to decrypt the JWE locally
+        (chacha20-poly1305) and the plaintext is shown in the app UI.
+
+        > [!TIP]
+        > **demo-app-1 (Private Clinic)** runs the whole NRRead branch on
+        > `dual-mode-resource.txt`; `nr-resource.txt` is NRRead-only.
+        """
+    }
+  }
+
+  view context {
+    title "Participants overview"
+    include *
+    include -> css
+    include -> app
+    include -> ttp
+  }
+}
