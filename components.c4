@@ -1,0 +1,166 @@
+specification {
+  element component {
+    style { shape rectangle }
+  }
+  element module {
+    style { shape rectangle }
+  }
+  element configfile {
+    style { shape document }
+  }
+}
+
+model {
+  extend css {
+    nraccess = component "Component NRAccess" {
+      title "NRAccess — server-side components"
+      summary "Six cooperating components layered on top of a Community Solid Server."
+      description """
+        Server-side implementation of the non-repudiable read (VERA) protocol,
+        organized as six cooperating components running on top of the
+        Community Solid Server (see VERA paper §2.2, Fig. 1).
+        """
+
+      // 1. HTTP entry (connectionless)
+      grp1 = component "1. HTTP entry (connectionless)" {
+        vcHttpHandler = module "VcHttpHandler.ts" {
+          summary """
+            Two-step SSI over HTTP
+            • initial VC request
+            • preliminary ACP check
+            • creates nonce/domain
+            • sends VP Request
+            """
+        }
+        vcDidCommHttpHandler = module "VcDidCommHttpHandler.ts" {
+          summary """
+            Passive + release flow
+            • no OOB, header-only 401
+            • validates nonce/domain
+            • signedresource → keyfordecrypt release
+            """
+        }
+        vcAuthorizingHttpHandler = module "VcAuthorizingHttpHandler.ts" {
+          summary "Bridge VP→CSS pipeline. Forks: Read serve direct, NRRead build encrypted release"
+        }
+      }
+
+      // 2. VP extraction and verification
+      grp2 = component "2. VP extraction and verification" {
+        vpChecker = module "VpChecker.ts" {
+          summary """
+            Verifies VP/VC and wrapped VP. Extracts holder DID, issuer DID,
+            requestACP.client, challenge/domain
+            """
+        }
+        vcExtractor = module "VcExtractor.ts" {
+          summary "Extracts the request triple: agent / client / issuer"
+        }
+        credentials = module "Credentials.ts" {
+          summary "Credentials model extended from agent to agent/client/issuer"
+        }
+        bearerWebidExtractor = module "BearerWebidExtractor.ts" {
+          title "BearerWebidExtractor.ts / DPoPWebIdExtractor.ts"
+          summary "Propagate client_id and iss in the CSS pipeline"
+        }
+      }
+
+      // 3. ACP authorization extension
+      grp3 = component "3. ACP authorization extension" {
+        acpReader = module "AcpReader.ts" {
+          summary """
+            Builds ACP context using: agent, client, issuer
+            Maps acl:NRRead → nonRepudiableRead
+            """
+        }
+        acpUtil = module "AcpUtil.ts" {
+          summary """
+            Vocabularies.ts — ACP matchers: acp:client, acp:issuer, acp:vc
+            ACL: acl:NRRead
+            """
+        }
+        permissionBasedAuthorizer = module "PermissionBasedAuthorizer.ts" {
+          summary """
+            Adapts authentication semantics: uses client to distinguish
+            authenticated vs anonymous requests
+            nonRepudiableRead satisfies read
+            """
+        }
+      }
+
+      // 4. SSI agent and non-repudiation core
+      grp4 = component "4. SSI agent and non-repudiation core" {
+        agentInitializer = module "AgentInitializer.ts" {
+          summary """
+            Bootstrap Credo/Askar SSI agent and CSS DID
+            createDidCommAuthenticateHeader: connectionless proof request (no OOB)
+            buildNonRepudiableRelease: encrypt for TTP key, attach NRO (hash + hashCredential + signatureFromCSS)
+            releaseKeyForSignedResource: verify NRR, release key
+            Shared by HTTP path and legacy DIDComm BasicMessage listener
+            """
+        }
+      }
+
+      // 5. Protected Release / Evidence Storing
+      grp5 = component "5. Protected Release / Evidence Storing" {
+        returnedArtefacts = module "Returned Artefacts" {
+          summary """
+            encryptedresource header (envelope + NRO)
+            keyfordecrypt header, released via CSS or TTP
+            (NonRepudiationMetadataWriter.ts)
+            """
+        }
+        nrEvidence = module "Non-Repudiable Evidence" {
+          summary """
+            VP-bound access context: agent/client/issuer
+            resource hash + signatures
+            """
+        }
+      }
+
+      // 6. Wiring and configuration
+      grp6 = component "6. Wiring and configuration" {
+        agentJson = configfile "agent.json / init.json" {
+          summary "starts SSI agent during worker bootstrap"
+        }
+        vcHttpHandlerJson = configfile "vc-http-handler.json / vc-http-did-handler.json" {
+          summary "wires handlers with extractor, checker, authorizer bridge"
+        }
+        defaultWithVcJson = configfile "default-with-vc.json" {
+          summary "adds VcHandler and VcDIDHandler to HTTP waterfall"
+        }
+        configFileVcJson = configfile "config/file-vc.json" {
+          summary "CSS profile enabling SSI/VC server"
+        }
+        packageJson = configfile "package.json" {
+          summary "adds Credo, Askar, DID JWT VC, PEX, digitalcredentials/vc, web-did-resolver, js-sha256, and modified-css"
+        }
+      }
+
+      // internal flows (mirror the HTTP waterfall / release pipeline)
+      grp6.defaultWithVcJson -> grp1.vcHttpHandler "adds to HTTP waterfall"
+      grp6.vcHttpHandlerJson -> grp1.vcDidCommHttpHandler "wires handlers"
+      grp6.agentJson -> grp4.agentInitializer "bootstraps SSI agent"
+
+      grp1.vcHttpHandler -> grp2.vpChecker "sends VP Request / verifies VP"
+      grp1.vcDidCommHttpHandler -> grp2.vcExtractor "extracts request triple"
+      grp2.vpChecker -> grp2.credentials "Credentials[agent, issuer, client]"
+      grp2.credentials -> grp3.acpReader "ACP context"
+      grp3.acpReader -> grp3.permissionBasedAuthorizer "maps acl:NRRead → nonRepudiableRead"
+      grp1.vcAuthorizingHttpHandler -> grp4.agentInitializer "Read direct / NRRead encrypted release"
+      grp4.agentInitializer -> grp5.returnedArtefacts "envelope + NRO, key release"
+      grp4.agentInitializer -> grp5.nrEvidence "stores VP-bound evidence"
+    }
+  }
+}
+
+views {
+  view nr-access-components of css.nraccess {
+    title "Component NRAccess — server-side components"
+    description """
+      Architectural components running on top of Community Solid Server
+      (VERA paper §2.2, Fig. 1).
+      """
+    include *
+  }
+}

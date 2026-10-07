@@ -562,11 +562,15 @@ views {
             Step **4** — the NRR it sends is the same **NonRepudiationDestination** VC the
             app signed in 5a (subject = requesterDid, requestedResource, signedHash = messageHash).
 
-            TTP-side checks:
+            TTP-side checks (observed as Tempo spans on `POST /checkResource`):
 
-            * verify the **NRR signature**
-            * verify **NRO consistency** (hashCredential / signatureFromCSS vs hash)
-            * decrypt the `encrypted_key` (JWE recipient) with the TTP's key
+            * `didcomm.unpack` — the TTP decrypts the JWE with its key (`payloadKey` = sym key)
+            * `vc.verifyCredential` ×3 — NRR signature + NRO consistency (hashCredential / signatureFromCSS vs hash)
+            * client `did.json` lookups — resolving the CSS did:web for the NRO verification
+
+            The TTP also stores its own receipt evidence (`nrrGraphService.storeReceivedNrr`):
+            `.internal/nrr-audit/records/<sha256>.ttl` with `messageHash` and `signedResourceFingerprint`
+            (file-based, no read endpoint).
 
             > [!IMPORTANT]
             > Only `{ encryptedResource, nrr }` is sent — `requestedResource` and
@@ -576,9 +580,13 @@ views {
         ttp -> app "keyForDecrypt" {
           technology "HTTPS"
           notes """
+            Response body: `{ "symKeyForDecrypt": <32-byte key>, "verification": {…}, "nrrRecordId": "64bd64e7c67b52dad2328ce10bb376feb322f7a2a0bdf0d39f4d9e62ccf7c759" }`
+            (nrrRecordId captured from a live 5b run).
+
             > [!TIP]
             > In the demo UI choose **Release via TTP**; the CSS audit then does **not**
-            > grow, which is how the two paths can be told apart.
+            > grow (stays empty), while the TTP's `nrr-audit` gains a record — that split
+            > is how the two paths can be told apart.
             """
         }
       }
