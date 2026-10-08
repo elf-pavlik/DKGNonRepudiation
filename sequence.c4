@@ -72,33 +72,147 @@ views {
       **demo-user** (wallet), **demo-app-1/2** (apps), **solid-css**, **demo-ttp**.
       """
 
-    user -> app "DIDComm Exchange" {
+        user -> app "didexchange/1.1 request" {
       technology "DIDComm"
+      description "The wallet accepts the app's out-of-band invitation and proposes its peer DID."
       notes """
-        The app generates an **out-of-band invitation** on page load; the wallet connects on demand.
+        The app generates an **out-of-band invitation**; the user pastes its URL into the wallet
+        (`POST /api/invitations` on demo-user), which resolves the app's did:web and starts the
+        handshake on demand.
 
-        Captured OOB invitation payload (base64 `oob` query parameter decoded):
+        Captured OOB invitation (base64 `oob` query parameter of
+        `http://demo-app-1:3010?oob=…`, decoded from the wallet's `http.request.body`):
 
         ```json
         {
           "@type": "https://didcomm.org/out-of-band/1.1/invitation",
-          "@id": "<uuid>",
-          "label": "SecureIssuer",
-          "accept": ["didcomm/aip1", "didcomm/aip2;env=rfc19"],
-          "handshake_protocols": ["https://didcomm.org/didexchange/1.1", "https://didcomm.org/connections/1.0"],
-          "services": ["did:web:secureissuer.solidcommunity.net:public"]
+          "@id": "ded321e0-123b-48d0-bb72-8e22dc63c512",
+          "label": "Private Clinic",
+          "accept": [
+            "didcomm/aip1",
+            "didcomm/aip2;env=rfc19"
+          ],
+          "handshake_protocols": [
+            "https://didcomm.org/didexchange/1.1",
+            "https://didcomm.org/connections/1.0"
+          ],
+          "services": [
+            "did:web:privateclinic.solidcommunity.net:public"
+          ]
+        }
+        ```
+
+        `~thread.pthid` of the request is the `@id` of this invitation. `did_doc~attach` carries the
+        wallet **peer DID** document (service endpoint `http://demo-user:3006`), signed with the
+        user's did:web key (`kid` = `did:key:z6MksJS8…UrzTb`).
+
+        Tempo: `didcomm.pack` on `demo-user` (direction=out, encrypted, recipients=1) and
+        `didcomm.unpack` on `demo-app-1` (direction=in), same `@id`.
+
+        Captured `didcomm.payload`:
+
+        ```json
+        {
+          "@type": "https://didcomm.org/didexchange/1.1/request",
+          "@id": "a0d9d359-e490-4549-b120-db71e5c7a702",
+          "label": "SecureUserWallettttt",
+          "did": "did:peer:1zQmNY6uVkpd1bzKpwQk4H1ziQDsXAqSogLyhNMQzd1usarf",
+          "didlong": "did:web:bboi.solidcommunity.net:public",
+          "~thread": {
+            "pthid": "ded321e0-123b-48d0-bb72-8e22dc63c512"
+          },
+          "did_doc~attach": {
+            "@id": "e5540bb8-496f-4c1f-a7c4-a7ea8707fe09",
+            "mime-type": "application/json",
+            "data": {
+              "base64": "eyJAY29udGV4dCI6WyJodHRwczovL3czaWQub3JnL2RpZC92MSJdLCJpZCI6ImRpZDpwZWVyOjF6UW1OWTZ1VmtwZDFiektwd1FrNEgxemlRRHNYQXFTb2dMeWhOTVF6ZDF1c2FyZiIsInNlcnZpY2UiOlt7ImlkIjoiI2lubGluZS0wIiwic2VydmljZUVuZHBvaW50IjoiaHR0cDovL2RlbW8tdXNlcjozMDA2IiwidHlwZSI6ImRpZC1jb21tdW5pY2F0aW9uIiwicHJpb3JpdHkiOjAsInJlY2lwaWVudEtleXMiOlsiI2tleS0xIl0sInJvdXRpbmdLZXlzIjpbXX1dLCJhdXRoZW50aWNhdGlvbiI6W3siaWQiOiIja2V5LTEiLCJ0eXBlIjoiRWQyNTUxOVZlcmlmaWNhdGlvbktleTIwMTgiLCJjb250cm9sbGVyIjoiI2lkIiwicHVibGljS2V5QmFzZTU4IjoiRVpyRlY4VUtQdnVBcFpObUxEREFaQmVzZ1V5WW9HNWNzd2VZUUNXSFNWdGsifV0sImtleUFncmVlbWVudCI6W3siaWQiOiIja2V5LTIiLCJ0eXBlIjoiWDI1NTE5S2V5QWdyZWVtZW50S2V5MjAxOSIsImNvbnRyb2xsZXIiOiIjaWQiLCJwdWJsaWNLZXlCYXNlNTgiOiJHb1dCUFR1REdKeWNSaTFIYmNHejJOTlFLNDl0R2RQaDJxb2luTlNDQnVtayJ9XX0=",
+              "jws": {
+                "protected": "eyJhbGciOiJFZERTQSIsImp3ayI6eyJrdHkiOiJPS1AiLCJjcnYiOiJFZDI1NTE5IiwieCI6InZ1VVk2TmxDa1RQb25Kemo3OFowRnlLOUhiNGxkcE9udnlpc0tQaDBsNEkifX0",
+                "signature": "zi_6UVSrWmGGJo8LDuLKtkn8jZBVDpYzJ3SMQCXC-ftP40CP-zvNl1aPaeS_tq9LpLOE5nmvtyiYK7tYzXyXBw",
+                "header": {
+                  "kid": "did:key:z6MksJS85b7ugR3Mr5FVfGMeL4HB25uvEjrn8zXYzptUrzTb"
+                }
+              }
+            }
+          }
+        }
+        ```
+        """
+    }
+
+    app -> user "didexchange/1.1 response" {
+      technology "DIDComm"
+      description "The app answers with its own peer DID for this connection."
+      notes """
+        `~thread.thid` is the `@id` of the request. `did_doc~attach` carries the app **peer DID**
+        document (service endpoint `http://demo-app-1:3010`), signed with the app's did:web key
+        (`kid` = `did:key:z6Mkw8gv…UGG6R`, the Private Clinic verification method).
+
+        Tempo: `didcomm.pack` on `demo-app-1` (direction=out, encrypted, recipients=1) and
+        `didcomm.unpack` on `demo-user` (direction=in), same `@id`.
+
+        Captured `didcomm.payload`:
+
+        ```json
+        {
+          "@type": "https://didcomm.org/didexchange/1.1/response",
+          "@id": "2f753e27-2586-48f3-84c5-bd5d142ab826",
+          "did": "did:peer:1zQmRyQh2GhwpPJtPPsojSEDc6WB9o5cC7N3vwVTCCLtApJS",
+          "~thread": {
+            "thid": "a0d9d359-e490-4549-b120-db71e5c7a702"
+          },
+          "did_doc~attach": {
+            "@id": "9f9e131d-4359-447e-a68a-615ab9329569",
+            "mime-type": "application/json",
+            "data": {
+              "base64": "eyJAY29udGV4dCI6WyJodHRwczovL3czaWQub3JnL2RpZC92MSJdLCJpZCI6ImRpZDpwZWVyOjF6UW1SeVFoMkdod3BQSnRQUHNvalNFRGM2V0I5bzVjQzdOM3Z3VlRDQ0x0QXBKUyIsInNlcnZpY2UiOlt7ImlkIjoiI2lubGluZS0wIiwic2VydmljZUVuZHBvaW50IjoiaHR0cDovL2RlbW8tYXBwLTE6MzAxMCIsInR5cGUiOiJkaWQtY29tbXVuaWNhdGlvbiIsInByaW9yaXR5IjowLCJyZWNpcGllbnRLZXlzIjpbIiNrZXktMSJdLCJyb3V0aW5nS2V5cyI6W119XSwiYXV0aGVudGljYXRpb24iOlt7ImlkIjoiI2tleS0xIiwidHlwZSI6IkVkMjU1MTlWZXJpZmljYXRpb25LZXkyMDE4IiwiY29udHJvbGxlciI6IiNpZCIsInB1YmxpY0tleUJhc2U1OCI6IjdpTktIYXMzbXJINU45bWlQaHdkeGhybnQzZm5XUlh4ZjhSSHVqc0tQb2VyIn1dLCJrZXlBZ3JlZW1lbnQiOlt7ImlkIjoiI2tleS0yIiwidHlwZSI6IlgyNTUxOUtleUFncmVlbWVudEtleTIwMTkiLCJjb250cm9sbGVyIjoiI2lkIiwicHVibGljS2V5QmFzZTU4IjoiSDV6ajdiUjdOU2Q5TWk2a2tDZjhSaVY2bVNDOFFQQ1N0ZUp0VnpjdUVYc1EifV19",
+              "jws": {
+                "protected": "eyJhbGciOiJFZERTQSIsImp3ayI6eyJrdHkiOiJPS1AiLCJjcnYiOiJFZDI1NTE5IiwieCI6Ijk5VEd0UEFNU3ROZ1Z5b1N2cWJIdzF6RUlRUjYyLWVSTlphR1F6R1RBbDQifX0",
+                "signature": "1JthA0b8SsUMe2Zq7nkSthfll7Y1ntd50fTPeGKngziqXiwxGheR16xYVD07UsPW4SZ3_iymn1_sAQ6G3bRoDQ",
+                "header": {
+                  "kid": "did:key:z6Mkw8gvjGdMLMN4RvX4kWZVSUYM2pWJHS3VdZ7NsKuUGG6R"
+                }
+              }
+            }
+          }
+        }
+        ```
+        """
+    }
+
+    user -> app "didexchange/1.1 complete" {
+      technology "DIDComm"
+      description "The wallet confirms; the connection is ready."
+      notes """
+        Closes the thread opened by the request (`thid`) under the same invitation (`pthid`).
+
+        Tempo: `didcomm.pack` on `demo-user` (direction=out, encrypted, recipients=1) and
+        `didcomm.unpack` on `demo-app-1` (direction=in), same `@id`.
+
+        Captured `didcomm.payload`:
+
+        ```json
+        {
+          "@type": "https://didcomm.org/didexchange/1.1/complete",
+          "@id": "cb2bd9e5-4105-4d3a-bf30-40db6e222319",
+          "~thread": {
+            "thid": "a0d9d359-e490-4549-b120-db71e5c7a702",
+            "pthid": "ded321e0-123b-48d0-bb72-8e22dc63c512"
+          },
+          "~transport": {
+            "return_route": "none"
+          }
         }
         ```
 
         > [!NOTE]
-        > The handshake runs `https://didcomm.org/didexchange/1.1` — observed wire types
-        > `request` → `response` → `complete` (Tempo `didcomm.type`). After the exchange both
-        > sides have authorized each other:
+        > After the exchange both sides have authorized each other:
         >
         > * App authorized *(for the User)*
         > * User authorized *(for the App)*
         """
     }
+
 
     app -> css "GET resource" {
       technology "HTTPS"
@@ -130,40 +244,40 @@ views {
         * the **nonce → domain** mapping is kept server-side
 
         > [!IMPORTANT]
-        > The header value is `didcomm proofRequest="<base64url JSON VPR>"` — singular
+        > The header value is `didcomm proofRequest=\"<base64url JSON VPR>\"` — singular
         > *proofRequest*, not `proofRequests=`.
 
         Captured response header (live run):
 
         ```
-        www-authenticate: didcomm proofRequest="eyJAY29udGV4dCI6WyJodHRwczovL2Jib2ku…"
+        www-authenticate: didcomm proofRequest=\"eyJAY29udGV4dCI6WyJodHRwczovL2Jib2ku…\"
         ```
 
         Decoded payload (input_descriptors shortened):
 
         ```json
         {
-          "@context": ["https://bboi.solidcommunity.net/public/schemas/2024/presexchange.jsonld"],
-          "type": ["VerifiablePresentationRequest"],
-          "presentation_definition": {
-            "id": "32f54163-7166-48f1-93d8-ff217bdb0653",
-            "input_descriptors": [{ "id": "unisa_student", "constraints": { "fields": [{ "path": ["$.credentialSubject.degree", "$.credentialSubject.claims.degree"] }] } }],
-            "format": {
-              "ldp_vc": { "proof_type": ["JsonWebSignature2020", "Ed25519Signature2018", "EcdsaSecp256k1Signature2019", "RsaSignature2018"] },
-              "ldp_vp": { "proof_type": ["Ed25519Signature2018"] }
+          \"@context\": [\"https://bboi.solidcommunity.net/public/schemas/2024/presexchange.jsonld\"],
+          \"type\": [\"VerifiablePresentationRequest\"],
+          \"presentation_definition\": {
+            \"id\": \"32f54163-7166-48f1-93d8-ff217bdb0653\",
+            \"input_descriptors\": [{ \"id\": \"unisa_student\", \"constraints\": { \"fields\": [{ \"path\": [\"$.credentialSubject.degree\", \"$.credentialSubject.claims.degree\"] }] } }],
+            \"format\": {
+              \"ldp_vc\": { \"proof_type\": [\"JsonWebSignature2020\", \"Ed25519Signature2018\", \"EcdsaSecp256k1Signature2019\", \"RsaSignature2018\"] },
+              \"ldp_vp\": { \"proof_type\": [\"Ed25519Signature2018\"] }
             },
-            "requestACP": {
-              "type": ["ACPContext"],
-              "target": "http://localhost:3002/my-pod/test-folder/dual-mode-resource.txt",
-              "owner": "did:web:raw.githubusercontent.com:biagioboi:CommunitySolidServer:main",
-              "issuer": "did:web:secureissuer.solidcommunity.net:public",
-              "client": "did:web:privateclinic.solidcommunity.net:public",
-              "agent": "did:web:bboi.solidcommunity.net:public"
+            \"requestACP\": {
+              \"type\": [\"ACPContext\"],
+              \"target\": \"http://localhost:3002/my-pod/test-folder/dual-mode-resource.txt\",
+              \"owner\": \"did:web:raw.githubusercontent.com:biagioboi:CommunitySolidServer:main\",
+              \"issuer\": \"did:web:secureissuer.solidcommunity.net:public\",
+              \"client\": \"did:web:privateclinic.solidcommunity.net:public\",
+              \"agent\": \"did:web:bboi.solidcommunity.net:public\"
             }
           },
-          "options": {
-            "challenge": "JSciO4rWx1aKr08ypPMHFQ==",
-            "domain": "https://bboi.solidcommunity.net/definition/ourProtocol#test"
+          \"options\": {
+            \"challenge\": \"JSciO4rWx1aKr08ypPMHFQ==\",
+            \"domain\": \"https://bboi.solidcommunity.net/definition/ourProtocol#test\"
           }
         }
         ```
@@ -186,11 +300,11 @@ views {
 
         ```json
         {
-          "@context": ["https://bboi.solidcommunity.net/public/schemas/2024/wrappedvpr.jsonld"],
-          "id": "https://example.com/wrappedVPR/321122",
-          "type": ["VerifiablePresentationRequestWrapper"],
-          "wrappedVPR": { "…": "the full VPR below (Tempo `vera.vpr`)" },
-          "proof": { "…": "Ed25519Signature2018 by the app (signWrappedPresentationRequest)" }
+          \"@context\": [\"https://bboi.solidcommunity.net/public/schemas/2024/wrappedvpr.jsonld\"],
+          \"id\": \"https://example.com/wrappedVPR/321122\",
+          \"type\": [\"VerifiablePresentationRequestWrapper\"],
+          \"wrappedVPR\": { \"…\": \"the full VPR below (Tempo `vera.vpr`)\" },
+          \"proof\": { \"…\": \"Ed25519Signature2018 by the app (signWrappedPresentationRequest)\" }
         }
         ```
 
@@ -198,35 +312,35 @@ views {
 
         ```json
         {
-          "@context": ["https://bboi.solidcommunity.net/public/schemas/2024/presexchange.jsonld"],
-          "type": ["VerifiablePresentationRequest"],
-          "presentation_definition": {
-            "id": "32f54163-7166-48f1-93d8-ff217bdb0653",
-            "input_descriptors": [
+          \"@context\": [\"https://bboi.solidcommunity.net/public/schemas/2024/presexchange.jsonld\"],
+          \"type\": [\"VerifiablePresentationRequest\"],
+          \"presentation_definition\": {
+            \"id\": \"32f54163-7166-48f1-93d8-ff217bdb0653\",
+            \"input_descriptors\": [
               {
-                "id": "unisa_student",
-                "name": "University of Salerno Demo",
-                "purpose": "Demonstrate to be a student from the University of Salerno to access this POD",
-                "constraints": { "fields": [{ "path": ["$.credentialSubject.degree", "$.credentialSubject.claims.degree"] }] }
+                \"id\": \"unisa_student\",
+                \"name\": \"University of Salerno Demo\",
+                \"purpose\": \"Demonstrate to be a student from the University of Salerno to access this POD\",
+                \"constraints\": { \"fields\": [{ \"path\": [\"$.credentialSubject.degree\", \"$.credentialSubject.claims.degree\"] }] }
               }
             ],
-            "format": {
-              "ldp_vc": { "proof_type": ["JsonWebSignature2020", "Ed25519Signature2018", "EcdsaSecp256k1Signature2019", "RsaSignature2018"] },
-              "ldp_vp": { "proof_type": ["Ed25519Signature2018"] },
-              "ldp": { "proof_type": ["RsaSignature2018"] }
+            \"format\": {
+              \"ldp_vc\": { \"proof_type\": [\"JsonWebSignature2020\", \"Ed25519Signature2018\", \"EcdsaSecp256k1Signature2019\", \"RsaSignature2018\"] },
+              \"ldp_vp\": { \"proof_type\": [\"Ed25519Signature2018\"] },
+              \"ldp\": { \"proof_type\": [\"RsaSignature2018\"] }
             },
-            "requestACP": {
-              "type": ["ACPContext"],
-              "target": "http://localhost:3002/my-pod/test-folder/dual-mode-resource.txt",
-              "owner": "did:web:raw.githubusercontent.com:biagioboi:CommunitySolidServer:main",
-              "issuer": "did:web:secureissuer.solidcommunity.net:public",
-              "client": "did:web:publichospital.solidcommunity.net:public",
-              "agent": "did:web:bboi.solidcommunity.net:public"
+            \"requestACP\": {
+              \"type\": [\"ACPContext\"],
+              \"target\": \"http://localhost:3002/my-pod/test-folder/dual-mode-resource.txt\",
+              \"owner\": \"did:web:raw.githubusercontent.com:biagioboi:CommunitySolidServer:main\",
+              \"issuer\": \"did:web:secureissuer.solidcommunity.net:public\",
+              \"client\": \"did:web:publichospital.solidcommunity.net:public\",
+              \"agent\": \"did:web:bboi.solidcommunity.net:public\"
             }
           },
-          "options": {
-            "challenge": "LFUFcnbprftrb9uKLq3ihw==",
-            "domain": "https://bboi.solidcommunity.net/definition/ourProtocol#test"
+          \"options\": {
+            \"challenge\": \"LFUFcnbprftrb9uKLq3ihw==\",
+            \"domain\": \"https://bboi.solidcommunity.net/definition/ourProtocol#test\"
           }
         }
         ```
@@ -235,39 +349,39 @@ views {
 
         ```json
         {
-          "@type": "https://didcomm.org/present-proof/2.0/request-presentation",
-          "will_confirm": true,
-          "present_multiple": false,
-          "formats": [{ "attach_id": "bd9ae9d1-5382-439b-b7a8-cc917700eb5f", "format": "dif/presentation-exchange/definitions@v1.0" }],
-          "request_presentations~attach": [
+          \"@type\": \"https://didcomm.org/present-proof/2.0/request-presentation\",
+          \"will_confirm\": true,
+          \"present_multiple\": false,
+          \"formats\": [{ \"attach_id\": \"bd9ae9d1-5382-439b-b7a8-cc917700eb5f\", \"format\": \"dif/presentation-exchange/definitions@v1.0\" }],
+          \"request_presentations~attach\": [
             {
-              "@id": "bd9ae9d1-5382-439b-b7a8-cc917700eb5f",
-              "mime-type": "application/json",
-              "data": { "json": {
-                "…": "the wrapped VPR above, plus:",
-                "termsAndCondition": {
-                  "type": ["ACPContext"],
-                  "target": "http://localhost:3002/my-pod/test-folder/dual-mode-resource.txt",
-                  "owner": "did:web:raw.githubusercontent.com:biagioboi:CommunitySolidServer:main",
-                  "issuer": "did:web:secureissuer.solidcommunity.net:public",
-                  "client": "did:web:publichospital.solidcommunity.net:public",
-                  "agent": "did:web:bboi.solidcommunity.net:public"
+              \"@id\": \"bd9ae9d1-5382-439b-b7a8-cc917700eb5f\",
+              \"mime-type\": \"application/json\",
+              \"data\": { \"json\": {
+                \"…\": \"the wrapped VPR above, plus:\",
+                \"termsAndCondition\": {
+                  \"type\": [\"ACPContext\"],
+                  \"target\": \"http://localhost:3002/my-pod/test-folder/dual-mode-resource.txt\",
+                  \"owner\": \"did:web:raw.githubusercontent.com:biagioboi:CommunitySolidServer:main\",
+                  \"issuer\": \"did:web:secureissuer.solidcommunity.net:public\",
+                  \"client\": \"did:web:publichospital.solidcommunity.net:public\",
+                  \"agent\": \"did:web:bboi.solidcommunity.net:public\"
                 },
-                "proof": [
+                \"proof\": [
                   null,
                   {
-                    "verificationMethod": "did:web:publichospital.solidcommunity.net:public#z6MkrqvuwGXj6LPrrqbcgYbcQyKYp5WTzuB1yx68V52h4fpQ",
-                    "type": "Ed25519Signature2018",
-                    "created": "2026-10-07T03:46:32Z",
-                    "proofPurpose": "assertionMethod",
-                    "jws": "eyJhbGciOiJFZERTQSIsImI2NCI6ZmFsc2UsImNyaXQiOlsiYjY0Il19..L2TUd_DgYXrZ50ByR0v8rR5RWAhUwnITUJJGvBhzO2_-aXIe9Y5UuIXTLraTr_bZ6HFk8kaJU3eftMZEax1UDQ"
+                    \"verificationMethod\": \"did:web:publichospital.solidcommunity.net:public#z6MkrqvuwGXj6LPrrqbcgYbcQyKYp5WTzuB1yx68V52h4fpQ\",
+                    \"type\": \"Ed25519Signature2018\",
+                    \"created\": \"2026-10-07T03:46:32Z\",
+                    \"proofPurpose\": \"assertionMethod\",
+                    \"jws\": \"eyJhbGciOiJFZERTQSIsImI2NCI6ZmFsc2UsImNyaXQiOlsiYjY0Il19..L2TUd_DgYXrZ50ByR0v8rR5RWAhUwnITUJJGvBhzO2_-aXIe9Y5UuIXTLraTr_bZ6HFk8kaJU3eftMZEax1UDQ\"
                   }
                 ]
               } }
             }
           ],
-          "@id": "99063dd8-5d99-4f3f-9dc8-45f9f3d70743",
-          "~thread": { "thid": "dd2d0459-75b2-4d6a-ae50-0e392d9e7fa5" }
+          \"@id\": \"99063dd8-5d99-4f3f-9dc8-45f9f3d70743\",
+          \"~thread\": { \"thid\": \"dd2d0459-75b2-4d6a-ae50-0e392d9e7fa5\" }
         }
         ```
         """
@@ -283,54 +397,54 @@ views {
 
         ```json
         {
-          "@context": [
-            "https://www.w3.org/2018/credentials/v1",
-            "https://bboi.solidcommunity.net/public/schemas/2024/wrappedvp.jsonld"
+          \"@context\": [
+            \"https://www.w3.org/2018/credentials/v1\",
+            \"https://bboi.solidcommunity.net/public/schemas/2024/wrappedvp.jsonld\"
           ],
-          "id": "https://example.com/wrappedVP/321122",
-          "type": ["VerifiablePresentation"],
-          "wrappedVP": {
-            "@context": ["https://www.w3.org/2018/credentials/v1", "https://identity.foundation/presentation-exchange/submission/v1", "https://bboi.solidcommunity.net/public/schemas/2024/protocol.jsonld"],
-            "requestACP": {
-              "type": ["ACPContext"],
-              "target": "http://localhost:3002/my-pod/test-folder/dual-mode-resource.txt",
-              "owner": "did:web:raw.githubusercontent.com:biagioboi:CommunitySolidServer:main",
-              "issuer": "did:web:secureissuer.solidcommunity.net:public",
-              "client": "did:web:privateclinic.solidcommunity.net:public",
-              "agent": "did:web:bboi.solidcommunity.net:public"
+          \"id\": \"https://example.com/wrappedVP/321122\",
+          \"type\": [\"VerifiablePresentation\"],
+          \"wrappedVP\": {
+            \"@context\": [\"https://www.w3.org/2018/credentials/v1\", \"https://identity.foundation/presentation-exchange/submission/v1\", \"https://bboi.solidcommunity.net/public/schemas/2024/protocol.jsonld\"],
+            \"requestACP\": {
+              \"type\": [\"ACPContext\"],
+              \"target\": \"http://localhost:3002/my-pod/test-folder/dual-mode-resource.txt\",
+              \"owner\": \"did:web:raw.githubusercontent.com:biagioboi:CommunitySolidServer:main\",
+              \"issuer\": \"did:web:secureissuer.solidcommunity.net:public\",
+              \"client\": \"did:web:privateclinic.solidcommunity.net:public\",
+              \"agent\": \"did:web:bboi.solidcommunity.net:public\"
             },
-            "type": ["VerifiablePresentation", "PresentationSubmission"],
-            "holder": "did:web:bboi.solidcommunity.net:public",
-            "presentation_submission": {
-              "id": "1u3rmU5rMNiryU5CcQCGJ",
-              "definition_id": "32f54163-7166-48f1-93d8-ff217bdb0653",
-              "descriptor_map": [{ "id": "unisa_student", "format": "ldp_vc", "path": "$.verifiableCredential[0]" }]
+            \"type\": [\"VerifiablePresentation\", \"PresentationSubmission\"],
+            \"holder\": \"did:web:bboi.solidcommunity.net:public\",
+            \"presentation_submission\": {
+              \"id\": \"1u3rmU5rMNiryU5CcQCGJ\",
+              \"definition_id\": \"32f54163-7166-48f1-93d8-ff217bdb0653\",
+              \"descriptor_map\": [{ \"id\": \"unisa_student\", \"format\": \"ldp_vc\", \"path\": \"$.verifiableCredential[0]\" }]
             },
-            "verifiableCredential": [
+            \"verifiableCredential\": [
               {
-                "@context": ["https://www.w3.org/2018/credentials/v1", "https://www.w3.org/2018/credentials/examples/v1"],
-                "id": "https://example.com/credentials/321122",
-                "type": ["VerifiableCredential", "ExampleDegreeCredential"],
-                "issuer": "did:web:secureissuer.solidcommunity.net:public",
-                "issuanceDate": "2010-01-01T19:23:24Z",
-                "credentialSubject": { "id": "did:web:bboi.solidcommunity.net:public", "degree": { "type": "ExampleBachelorDegree", "name": "Engineering" } },
-                "proof": {
-                  "verificationMethod": "did:web:secureissuer.solidcommunity.net:public#z6Mkp2Ph528qMXQXmhHVbaDbMrL15R6qiQ1gGvD19C8meUar",
-                  "type": "Ed25519Signature2018",
-                  "created": "2026-10-07T03:44:06Z",
-                  "proofPurpose": "assertionMethod",
-                  "jws": "eyJhbGciOiJFZERTQSIsImI2NCI6ZmFsc2UsImNyaXQiOlsiYjY0Il19..KWljYij9-hhtNDLDOQeOoLzMRYm5XOZCKgn5-SRo7Son2F7qzsuZYhyPfuoMUqPWvnUI_SZKP9KV26HFahdPAA"
+                \"@context\": [\"https://www.w3.org/2018/credentials/v1\", \"https://www.w3.org/2018/credentials/examples/v1\"],
+                \"id\": \"https://example.com/credentials/321122\",
+                \"type\": [\"VerifiableCredential\", \"ExampleDegreeCredential\"],
+                \"issuer\": \"did:web:secureissuer.solidcommunity.net:public\",
+                \"issuanceDate\": \"2010-01-01T19:23:24Z\",
+                \"credentialSubject\": { \"id\": \"did:web:bboi.solidcommunity.net:public\", \"degree\": { \"type\": \"ExampleBachelorDegree\", \"name\": \"Engineering\" } },
+                \"proof\": {
+                  \"verificationMethod\": \"did:web:secureissuer.solidcommunity.net:public#z6Mkp2Ph528qMXQXmhHVbaDbMrL15R6qiQ1gGvD19C8meUar\",
+                  \"type\": \"Ed25519Signature2018\",
+                  \"created\": \"2026-10-07T03:44:06Z\",
+                  \"proofPurpose\": \"assertionMethod\",
+                  \"jws\": \"eyJhbGciOiJFZERTQSIsImI2NCI6ZmFsc2UsImNyaXQiOlsiYjY0Il19..KWljYij9-hhtNDLDOQeOoLzMRYm5XOZCKgn5-SRo7Son2F7qzsuZYhyPfuoMUqPWvnUI_SZKP9KV26HFahdPAA\"
                 }
               }
             ],
-            "proof": {
-              "verificationMethod": "did:web:bboi.solidcommunity.net:public#z6MksJS85b7ugR3Mr5FVfGMeL4HB25uvEjrn8zXYzptUrzTb",
-              "type": "Ed25519Signature2018",
-              "created": "2026-10-07T03:44:42Z",
-              "proofPurpose": "authentication",
-              "challenge": "6Bb2xU/VYRLkquAaDTZR7g==",
-              "domain": "https://bboi.solidcommunity.net/definition/ourProtocol#test",
-              "jws": "eyJhbGciOiJFZERTQSIsImI2NCI6ZmFsc2UsImNyaXQiOlsiYjY0Il19..4nzg_sUUf4ytJs3XeHSOf_8Vm2t8aoVVrOgG5xUEE4EwY-ahzYytBxWnivVaPLhlNgj8DXFZ00cWcb_M8ASiBA"
+            \"proof\": {
+              \"verificationMethod\": \"did:web:bboi.solidcommunity.net:public#z6MksJS85b7ugR3Mr5FVfGMeL4HB25uvEjrn8zXYzptUrzTb\",
+              \"type\": \"Ed25519Signature2018\",
+              \"created\": \"2026-10-07T03:44:42Z\",
+              \"proofPurpose\": \"authentication\",
+              \"challenge\": \"6Bb2xU/VYRLkquAaDTZR7g==\",
+              \"domain\": \"https://bboi.solidcommunity.net/definition/ourProtocol#test\",
+              \"jws\": \"eyJhbGciOiJFZERTQSIsImI2NCI6ZmFsc2UsImNyaXQiOlsiYjY0Il19..4nzg_sUUf4ytJs3XeHSOf_8Vm2t8aoVVrOgG5xUEE4EwY-ahzYytBxWnivVaPLhlNgj8DXFZ00cWcb_M8ASiBA\"
             }
           }
         }
@@ -340,10 +454,10 @@ views {
 
         ```json
         {
-          "@type": "https://didcomm.org/present-proof/2.0/presentation",
-          "last_presentation": true,
-          "formats": [{ "attach_id": "<uuid>", "format": "dif/presentation-exchange/submission@v1.0" }],
-          "presentations~attach": [{ "…": "the wrapped VP above" }]
+          \"@type\": \"https://didcomm.org/present-proof/2.0/presentation\",
+          \"last_presentation\": true,
+          \"formats\": [{ \"attach_id\": \"<uuid>\", \"format\": \"dif/presentation-exchange/submission@v1.0\" }],
+          \"presentations~attach\": [{ \"…\": \"the wrapped VP above\" }]
         }
         ```
 
@@ -374,23 +488,23 @@ views {
         Captured wire header (live run):
 
         ```
-        vp: {"@context":["https://www.w3.org/2018/credentials/v1","https://bboi.solidcommunity.net/public/schemas/2024/wrappedvp.jsonld"],"id":"https://example.com/wrappedVP/321122","type":["VerifiablePresentation"],"wrappedVP":{"@context":[…],"…":"…"}}
+        vp: {\"@context\":[\"https://www.w3.org/2018/credentials/v1\",\"https://bboi.solidcommunity.net/public/schemas/2024/wrappedvp.jsonld\"],\"id\":\"https://example.com/wrappedVP/321122\",\"type\":[\"VerifiablePresentation\"],\"wrappedVP\":{\"@context\":[…],\"…\":\"…\"}}
         ```
 
         Captured `Credentials` object (`css.VpChecker.verifyNew` → `vera.credentials`):
 
         ```json
         {
-          "agent": "did:web:bboi.solidcommunity.net:public",
-          "client": "did:web:privateclinic.solidcommunity.net:public",
-          "issuer": "did:web:secureissuer.solidcommunity.net:public"
+          \"agent\": \"did:web:bboi.solidcommunity.net:public\",
+          \"client\": \"did:web:privateclinic.solidcommunity.net:public\",
+          \"issuer\": \"did:web:secureissuer.solidcommunity.net:public\"
         }
         ```
         """
     }
 
-    alt 'access decision' {
-      when '3a — only acl:Read granted' {
+    alt "access decision" {
+      when "3a — only acl:Read granted" {
         css -> app "200 OK + plaintext resource" {
           technology "HTTPS"
           notes """
@@ -409,41 +523,127 @@ views {
             """
         }
       }
-      else '3b — only acl:NRRead granted' {
-        css -> ttp "reserved DIDComm escrow channel" {
-          technology "DIDComm"
-          notes """
+      else "3b — only acl:NRRead granted" {
+        opt "only on the first NRRead, or after a TTP key refresh" {
+          css -> ttp "didexchange/1.1 request" {
+            technology "DIDComm"
+            description "The CSS accepts the TTP's out-of-band invitation and proposes its peer DID."
+            notes """
             > [!NOTE]
-            > Opened on first use and **reused** (no key rotation); the CSS encrypts the
-            > fresh symKey for the **TTP's recipient keys** resolved from its DID document.
+            > Opened on first use and **reused**: `ensureTtpConnection()` keeps the connection id in
+            > memory, so this handshake runs again only after a CSS restart or if the stored
+            > connection is no longer found.
 
-            Captured handshake in one trace (`solid-css` ↔ `demo-ttp`, both directions):
-            `didexchange/1.1 request → response → complete` — `didcomm.pack`/`unpack` spans with
-            `didcomm.type`, `didcomm.direction` and `recipients=1` on the packed messages.
+            `~thread.pthid` is the id of the out-of-band invitation the CSS fetched from the TTP
+            (`GET /generateInvitation`). `did_doc~attach` carries the CSS **peer DID** document
+            (service endpoint `http://solid-css:3015`), signed with the CSS did:web key
+            (`kid` = `did:key:z6Mkf9bx…kt3A`).
 
-            Captured `didexchange/1.1 request` (`didcomm.payload` — `did_doc~attach` complete, base64 decodes to the CSS DID doc with service endpoint `http://solid-css:3015`):
+            Tempo: `didcomm.pack` on `solid-css` (direction=out, encrypted, recipients=1) and
+            `didcomm.unpack` on `demo-ttp` (direction=in), same `@id`.
+
+            Captured `didcomm.payload`:
 
             ```json
             {
-              "@type": "https://didcomm.org/didexchange/1.1/request",
-              "@id": "71d0e9bb-8c96-4639-ad7b-d9afc8e20e2b",
-              "label": "SecureSolidApplication",
-              "did": "did:peer:1zQmVVnDxwnYXGw9KenAfznjpQ3ji1CXgJoFSX3mbX98wC6j",
-              "didlong": "did:web:raw.githubusercontent.com:biagioboi:CommunitySolidServer:main",
-              "~thread": { "pthid": "4b24d0b2-b679-4f6e-bbc8-cdc89843ece6" },
-              "did_doc~attach": {
-                "@id": "b47c6e37-2d1e-48f1-b64a-3118b9321aa4",
-                "mime-type": "application/json",
-                "data": {
-                  "base64": "eyJAY29udGV4dCI6WyJodHRwczovL3czaWQub3JnL2RpZC92MSJdLCJpZCI6ImRpZDpwZWVyOjF6UW1WVm5EeHduWVhHdzlLZW5BZnpuanBRM2ppMUNYZ0pvRlNYM21iWDk4d0M2aiIsInNlcnZpY2UiOlt7ImlkIjoiI2lubGluZS0wIiwic2VydmljZUVuZHBvaW50IjoiaHR0cDovL3NvbGlkLWNzczozMDE1IiwidHlwZSI6ImRpZC1jb21tdW5pY2F0aW9uIiwicHJpb3JpdHkiOjAsInJlY2lwaWVudEtleXMiOlsiI2tleS0xIl0sInJvdXRpbmdLZXlzIjpbXX1dLCJhdXRoZW50aWNhdGlvbiI6W3siaWQiOiIja2V5LTEiLCJ0eXBlIjoiRWQyNTUxOVZlcmlmaWNhdGlvbktleTIwMTgiLCJjb250cm9sbGVyIjoiI2lkIiwicHVibGljS2V5QmFzZTU4IjoiOFVlWjV2UTJEMTQ1RlVpZ3NFcHFLaTlkeEVWa2dvYVRwdXRleURibmd0NVIifV0sImtleUFncmVlbWVudCI6W3siaWQiOiIja2V5LTIiLCJ0eXBlIjoiWDI1NTE5S2V5QWdyZWVtZW50S2V5MjAxOSIsImNvbnRyb2xsZXIiOiIjaWQiLCJwdWJsaWNLZXlCYXNlNTgiOiI2V1FZNnlvZU1NdWRYdnRWSGVlckVUSGNlamR1N0xvQ2JHR2J1UzI4OWhYZSJ9XX0=",
-                  "jws": { "protected": "eyJhbGciOiJFZERTQSIsImp3ayI6eyJrdHkiOiJPS1AiLCJjcnYiOiJFZDI1NTE5IiwieCI6IkNsWEJQeVpyTTNEWXlBUzFpYXBuS0ZaYlJXOUw5X3pEYk1Lb29IdlJxWEUifX0", "signature": "1OIFsK57Qxe9U9v87HHQZM-E3pTvOMeqBGysHiv7331u-eMvbS4yOVhQ7IG--N6mNh2iLs_Tz0-V2sVbYjz6DQ", "header": { "kid": "did:key:z6Mkf9bxtpvqPMimswSwNb9wz7TewzB4TZAaybpS8Gkpkt3A" } }
+              \"@type\": \"https://didcomm.org/didexchange/1.1/request\",
+              \"@id\": \"2fc59d92-9cd2-4be8-8746-9db79806bdf2\",
+              \"label\": \"SecureSolidApplication\",
+              \"did\": \"did:peer:1zQmQEGg4u5AZjHaXxbzgQrzezHFruZzegvXMm8sB93oM35r\",
+              \"didlong\": \"did:web:raw.githubusercontent.com:biagioboi:CommunitySolidServer:main\",
+              \"~thread\": {
+                \"pthid\": \"9ff8cc39-a582-4c1c-8488-ca160a63e6f4\"
+              },
+              \"did_doc~attach\": {
+                \"@id\": \"d92c2a0d-98e6-4efd-af2e-80e5559f0c5e\",
+                \"mime-type\": \"application/json\",
+                \"data\": {
+                  \"base64\": \"eyJAY29udGV4dCI6WyJodHRwczovL3czaWQub3JnL2RpZC92MSJdLCJpZCI6ImRpZDpwZWVyOjF6UW1RRUdnNHU1QVpqSGFYeGJ6Z1FyemV6SEZydVp6ZWd2WE1tOHNCOTNvTTM1ciIsInNlcnZpY2UiOlt7ImlkIjoiI2lubGluZS0wIiwic2VydmljZUVuZHBvaW50IjoiaHR0cDovL3NvbGlkLWNzczozMDE1IiwidHlwZSI6ImRpZC1jb21tdW5pY2F0aW9uIiwicHJpb3JpdHkiOjAsInJlY2lwaWVudEtleXMiOlsiI2tleS0xIl0sInJvdXRpbmdLZXlzIjpbXX1dLCJhdXRoZW50aWNhdGlvbiI6W3siaWQiOiIja2V5LTEiLCJ0eXBlIjoiRWQyNTUxOVZlcmlmaWNhdGlvbktleTIwMTgiLCJjb250cm9sbGVyIjoiI2lkIiwicHVibGljS2V5QmFzZTU4IjoiSDM2aDExeDdYUDNaVXhKTlRzekxONGE1WUtqZHRSRWg0WFZYZ0hGa1dCaFgifV0sImtleUFncmVlbWVudCI6W3siaWQiOiIja2V5LTIiLCJ0eXBlIjoiWDI1NTE5S2V5QWdyZWVtZW50S2V5MjAxOSIsImNvbnRyb2xsZXIiOiIjaWQiLCJwdWJsaWNLZXlCYXNlNTgiOiIzNk1RU004aDlhQ1I1NlBEZ01QZW4zRHNoUDZ0dmFNYmJ0OEZSQU1NSzNkYSJ9XX0=\",
+                  \"jws\": {
+                    \"protected\": \"eyJhbGciOiJFZERTQSIsImp3ayI6eyJrdHkiOiJPS1AiLCJjcnYiOiJFZDI1NTE5IiwieCI6IkNsWEJQeVpyTTNEWXlBUzFpYXBuS0ZaYlJXOUw5X3pEYk1Lb29IdlJxWEUifX0\",
+                    \"signature\": \"cRui4bHwORFH2FGTgQkw5INUoxu0G9A37t_W8c9AHlqTHVnydDfcm9onkEnwh2x7pPMvmZLhRnCE3dyNQdM3Bw\",
+                    \"header\": {
+                      \"kid\": \"did:key:z6Mkf9bxtpvqPMimswSwNb9wz7TewzB4TZAaybpS8Gkpkt3A\"
+                    }
+                  }
                 }
               }
             }
             ```
-
-            The closing `complete` carries `"~transport": { "return_route": "none" }`.
             """
+          }
+          ttp -> css "didexchange/1.1 response" {
+            technology "DIDComm"
+            description "The TTP answers with its own peer DID for this channel."
+            notes """
+            `~thread.thid` is the `@id` of the request. `did_doc~attach` carries the TTP **peer DID**
+            document (service endpoint `http://demo-ttp:3070`, Ed25519 `#key-1` as recipient key,
+            X25519 `#key-2` for key agreement), signed with the TTP did:web key
+            (`kid` = `did:key:z6Mku4Cj…D243`, the key published in `demo-ttp/config/did.json`).
+
+            > [!IMPORTANT]
+            > This peer DID is what `getTtpRecipientKeys()` resolves later
+            > (`connectionRecord.theirDid`): the fresh symKey is encrypted for these recipient keys.
+
+            Tempo: `didcomm.pack` on `demo-ttp` (direction=out, encrypted, recipients=1) and
+            `didcomm.unpack` on `solid-css` (direction=in), same `@id`.
+
+            Captured `didcomm.payload`:
+
+            ```json
+            {
+              \"@type\": \"https://didcomm.org/didexchange/1.1/response\",
+              \"@id\": \"9ebfb8c0-8506-437b-9776-106715d8ab61\",
+              \"did\": \"did:peer:1zQmUiTxizdVJcGSCdskKBhVsTcZF1TcuaXdAFaA1cX4MRXe\",
+              \"~thread\": {
+                \"thid\": \"2fc59d92-9cd2-4be8-8746-9db79806bdf2\"
+              },
+              \"did_doc~attach\": {
+                \"@id\": \"9bd7ee56-352d-46ea-a84a-acddea1ddee2\",
+                \"mime-type\": \"application/json\",
+                \"data\": {
+                  \"base64\": \"eyJAY29udGV4dCI6WyJodHRwczovL3czaWQub3JnL2RpZC92MSJdLCJpZCI6ImRpZDpwZWVyOjF6UW1VaVR4aXpkVkpjR1NDZHNrS0JoVnNUY1pGMVRjdWFYZEFGYUExY1g0TVJYZSIsInNlcnZpY2UiOlt7ImlkIjoiI2lubGluZS0wIiwic2VydmljZUVuZHBvaW50IjoiaHR0cDovL2RlbW8tdHRwOjMwNzAiLCJ0eXBlIjoiZGlkLWNvbW11bmljYXRpb24iLCJwcmlvcml0eSI6MCwicmVjaXBpZW50S2V5cyI6WyIja2V5LTEiXSwicm91dGluZ0tleXMiOltdfV0sImF1dGhlbnRpY2F0aW9uIjpbeyJpZCI6IiNrZXktMSIsInR5cGUiOiJFZDI1NTE5VmVyaWZpY2F0aW9uS2V5MjAxOCIsImNvbnRyb2xsZXIiOiIjaWQiLCJwdWJsaWNLZXlCYXNlNTgiOiJCTXg0RXR1d0duZGJ2cGtHNEIzUFVhUHYzYjNMSjNkVGlITGJ1b1JYRWR1eCJ9XSwia2V5QWdyZWVtZW50IjpbeyJpZCI6IiNrZXktMiIsInR5cGUiOiJYMjU1MTlLZXlBZ3JlZW1lbnRLZXkyMDE5IiwiY29udHJvbGxlciI6IiNpZCIsInB1YmxpY0tleUJhc2U1OCI6IkRFTnRoZHRwa0pjemZLN3Q0Y1BFV0Zqc2lWQUhlclpNUVlpdHJuYnh5YjZKIn1dfQ==\",
+                  \"jws\": {
+                    \"protected\": \"eyJhbGciOiJFZERTQSIsImp3ayI6eyJrdHkiOiJPS1AiLCJjcnYiOiJFZDI1NTE5IiwieCI6IjJQYzF2MU5xYmg4Y1Z1eXpTSEZFYnkyMF9mSllpUlh0dkMxWjJhSFh6MVEifX0\",
+                    \"signature\": \"xnGaqLgXxJqqNTVEcLb9xOMMsFaS0qvW_G-vTpZ6tn_pQP0kw-UsvGEeUlyPIa0ws_RyqERekycUyREbnRr3DA\",
+                    \"header\": {
+                      \"kid\": \"did:key:z6Mku4Cjz6zvNSxhLjM3hjAnPrh5N59HLBsjyuxvmLAMD243\"
+                    }
+                  }
+                }
+              }
+            }
+            ```
+            """
+          }
+          css -> ttp "didexchange/1.1 complete" {
+            technology "DIDComm"
+            description "The CSS confirms; the reserved escrow channel is ready."
+            notes """
+            Closes the thread opened by the request (`thid`) under the same invitation (`pthid`).
+            After this message both sides hold a ready connection and the CSS stores its id as
+            `ttpConnectionId`.
+
+            Tempo: `didcomm.pack` on `solid-css` (direction=out, encrypted, recipients=1) and
+            `didcomm.unpack` on `demo-ttp` (direction=in), same `@id`.
+
+            Captured `didcomm.payload`:
+
+            ```json
+            {
+              \"@type\": \"https://didcomm.org/didexchange/1.1/complete\",
+              \"@id\": \"889071f5-bd7e-4ad2-8fa6-18217d40cb9e\",
+              \"~thread\": {
+                \"thid\": \"2fc59d92-9cd2-4be8-8746-9db79806bdf2\",
+                \"pthid\": \"9ff8cc39-a582-4c1c-8488-ca160a63e6f4\"
+              },
+              \"~transport\": {
+                \"return_route\": \"none\"
+              }
+            }
+            ```
+            """
+          }
         }
         css -> app "encryptedresource: JWE + hash + NRO material" {
           technology "HTTPS"
@@ -465,22 +665,22 @@ views {
 
             ```json
             {
-              "protected": {
-                "enc": "xchacha20poly1305_ietf",
-                "typ": "JWM/1.0",
-                "alg": "Anoncrypt",
-                "recipients": [{ "encrypted_key": "mek1e-FPXcLc-y3EODLW4lKbMnCpVPmLuumMjJqMgXGOmvpsp0pZUWqI10WtFys6UZCl2ozyV3UIWSksITdN82pwYsr0LBnJUuz9aGuCyHg", "header": { "kid": "4G8Kbd6akNj3NPjniahnDWMmMjVVMits62Qcm1VcDDoD" } }]
+              \"protected\": {
+                \"enc\": \"xchacha20poly1305_ietf\",
+                \"typ\": \"JWM/1.0\",
+                \"alg\": \"Anoncrypt\",
+                \"recipients\": [{ \"encrypted_key\": \"mek1e-FPXcLc-y3EODLW4lKbMnCpVPmLuumMjJqMgXGOmvpsp0pZUWqI10WtFys6UZCl2ozyV3UIWSksITdN82pwYsr0LBnJUuz9aGuCyHg\", \"header\": { \"kid\": \"4G8Kbd6akNj3NPjniahnDWMmMjVVMits62Qcm1VcDDoD\" } }]
               },
-              "ciphertext": "…",
-              "iv": "bCoPNB9s9g7jzPOI",
-              "tag": "EqFUqOxNbuam8duSyVBCrw",
-              "hash": "f970288ecdc17639e1d606a14dbb451d5a335eb244c4e5de6851165b011a66a1",
-              "hashCredential": { "@context": ["https://www.w3.org/2018/credentials/v1", "https://privateclinic.solidcommunity.net/public/NonRepudiationContext.jsonld"], "id": "https://example.com/credentials/1872", "type": ["VerifiableCredential", "NonRepudiableOrigin"], "issuer": "did:web:raw.githubusercontent.com:biagioboi:CommunitySolidServer:main", "credentialSubject": { "id": "did:web:bboi.solidcommunity.net:public" }, "signedHash": "f970288ecdc17639e1d606a14dbb451d5a335eb244c4e5de6851165b011a66a1", "proof": { "type": "Ed25519Signature2018", "proofPurpose": "assertionMethod", "jws": "eyJhbGciOiJFZERTQS…" } },
-              "signatureFromCSS": {
-                "protected": "eyJhbGciOiJFZERTQSIsImp3ayI6eyJrdHkiOiJPS1AiLCJjcnYiOiJFZDI1NTE5IiwieCI6IkNsWEJQeVpyTTNEWXlBUzFpYXBuS0ZaYlJXOUw5X3pEYk1Lb29IdlJxWEUifX0",
-                "signature": "ndGBqEKDU-bHPKGwPq7RQAe0peve0nrXvpqBXvWy6bWw-GOCwrTFEC8JIzsnGKbHR81SiyLVd2JespsTZ_KOCA",
-                "header": { "kid": "did:key:z6Mkf9bxtpvqPMimswSwNb9wz7TewzB4TZAaybpS8Gkpkt3A" },
-                "payload": "Zjk3MDI4OGVjZGMxNzYzOWUxZDYwNmExNGRiYjQ1MWQ1YTMzNWViMjQ0YzRlNWRlNjg1MTE2NWIwMTFhNjZhMQ"
+              \"ciphertext\": \"…\",
+              \"iv\": \"bCoPNB9s9g7jzPOI\",
+              \"tag\": \"EqFUqOxNbuam8duSyVBCrw\",
+              \"hash\": \"f970288ecdc17639e1d606a14dbb451d5a335eb244c4e5de6851165b011a66a1\",
+              \"hashCredential\": { \"@context\": [\"https://www.w3.org/2018/credentials/v1\", \"https://privateclinic.solidcommunity.net/public/NonRepudiationContext.jsonld\"], \"id\": \"https://example.com/credentials/1872\", \"type\": [\"VerifiableCredential\", \"NonRepudiableOrigin\"], \"issuer\": \"did:web:raw.githubusercontent.com:biagioboi:CommunitySolidServer:main\", \"credentialSubject\": { \"id\": \"did:web:bboi.solidcommunity.net:public\" }, \"signedHash\": \"f970288ecdc17639e1d606a14dbb451d5a335eb244c4e5de6851165b011a66a1\", \"proof\": { \"type\": \"Ed25519Signature2018\", \"proofPurpose\": \"assertionMethod\", \"jws\": \"eyJhbGciOiJFZERTQS…\" } },
+              \"signatureFromCSS\": {
+                \"protected\": \"eyJhbGciOiJFZERTQSIsImp3ayI6eyJrdHkiOiJPS1AiLCJjcnYiOiJFZDI1NTE5IiwieCI6IkNsWEJQeVpyTTNEWXlBUzFpYXBuS0ZaYlJXOUw5X3pEYk1Lb29IdlJxWEUifX0\",
+                \"signature\": \"ndGBqEKDU-bHPKGwPq7RQAe0peve0nrXvpqBXvWy6bWw-GOCwrTFEC8JIzsnGKbHR81SiyLVd2JespsTZ_KOCA\",
+                \"header\": { \"kid\": \"did:key:z6Mkf9bxtpvqPMimswSwNb9wz7TewzB4TZAaybpS8Gkpkt3A\" },
+                \"payload\": \"Zjk3MDI4OGVjZGMxNzYzOWUxZDYwNmExNGRiYjQ1MWQ1YTMzNWViMjQ0YzRlNWRlNjg1MTE2NWIwMTFhNjZhMQ\"
               }
             }
             ```
@@ -499,14 +699,13 @@ views {
             > the hash covers the **plaintext resource only**.
             """
         }
-      }
-    }
 
-    alt 'release path' {
-      when '5a — release via CSS' {
-        app -> css "GET resource (header: signedresource = [NRR JSON])" {
-          technology "HTTPS"
-          notes """
+
+        alt "release path" {
+          when "5a — release via CSS" {
+            app -> css "GET resource (header: signedresource = [NRR JSON])" {
+              technology "HTTPS"
+              notes """
             Step **4** — the app signs the receipt as a **NonRepudiationDestination** VC
             (issuer = app DID, subject = requesterDid, requestedResource, signedHash = messageHash)
             and only then picks a release path — the NRR is the only thing that unlocks the escrowed key.
@@ -521,27 +720,27 @@ views {
 
             ```json
             {
-              "@context": ["https://www.w3.org/2018/credentials/v1", "https://privateclinic.solidcommunity.net/public/NonRepudiationContext.jsonld"],
-              "id": "urn:uuid:f65ea059-7110-4c2f-88b4-82e87bdf17c4",
-              "type": ["VerifiableCredential", "NonRepudiationDestination"],
-              "issuer": "did:web:privateclinic.solidcommunity.net:public",
-              "issuanceDate": "2026-10-07T00:11:50.10Z",
-              "credentialSubject": {
-                "id": "did:web:bboi.solidcommunity.net:public",
-                "requestedResource": "http://localhost:3002/my-pod/test-folder/dual-mode-resource.txt",
-                "signedHash": "f970288ecdc17639e1d606a14dbb451d5a335eb244c4e5de6851165b011a66a1"
+              \"@context\": [\"https://www.w3.org/2018/credentials/v1\", \"https://privateclinic.solidcommunity.net/public/NonRepudiationContext.jsonld\"],
+              \"id\": \"urn:uuid:f65ea059-7110-4c2f-88b4-82e87bdf17c4\",
+              \"type\": [\"VerifiableCredential\", \"NonRepudiationDestination\"],
+              \"issuer\": \"did:web:privateclinic.solidcommunity.net:public\",
+              \"issuanceDate\": \"2026-10-07T00:11:50.10Z\",
+              \"credentialSubject\": {
+                \"id\": \"did:web:bboi.solidcommunity.net:public\",
+                \"requestedResource\": \"http://localhost:3002/my-pod/test-folder/dual-mode-resource.txt\",
+                \"signedHash\": \"f970288ecdc17639e1d606a14dbb451d5a335eb244c4e5de6851165b011a66a1\"
               },
-              "proof": { "type": "Ed25519Signature2018", "proofPurpose": "assertionMethod", "jws": "eyJhbGciOiJFZERTQSIsImI2NCI6ZmFsc2UsImNyaXQiOlsiYjY0Il19..sUNMq0NeinEC5UZUY_tiCYlIWpRCpNHcLQ2NpjrmvLWAPm3ycnsokG44fwW881_8eTTKOsN3nTRaQVKExw5xBA" }
+              \"proof\": { \"type\": \"Ed25519Signature2018\", \"proofPurpose\": \"assertionMethod\", \"jws\": \"eyJhbGciOiJFZERTQSIsImI2NCI6ZmFsc2UsImNyaXQiOlsiYjY0Il19..sUNMq0NeinEC5UZUY_tiCYlIWpRCpNHcLQ2NpjrmvLWAPm3ycnsokG44fwW881_8eTTKOsN3nTRaQVKExw5xBA\" }
             }
             ```
 
             > [!TIP]
             > The CSS audit endpoint is `GET /detail/.internal/jws-audit/query` (demo: `:3002`).
             """
-        }
-        css -> app "keyfordecrypt header" {
-          technology "HTTPS"
-          notes """
+            }
+            css -> app "keyfordecrypt header" {
+              technology "HTTPS"
+              notes """
             > [!NOTE]
             > The key release is **single-use**: `lastKeyForMsgEncryption[hash]` is deleted
             > once the NRR is accepted.
@@ -549,16 +748,16 @@ views {
             Captured header value (JSON-encoded 32-byte sym key, fresh per release — `http.response.header.keyfordecrypt`):
 
             ```json
-            {"0":235,"1":166,"2":242,"3":48,"4":120,"5":166,"6":123,"7":145,"8":131,"9":12,"10":216,"11":101,"12":211,"13":213,"14":209,"15":33,"16":44,"17":95,"18":169,"19":108,"20":83,"21":3,"22":190,"23":241,"24":130,"25":205,"26":126,"27":76,"28":173,"29":142,"30":77,"31":194}
+            {\"0\":235,\"1\":166,\"2\":242,\"3\":48,\"4\":120,\"5\":166,\"6\":123,\"7\":145,\"8\":131,\"9\":12,\"10\":216,\"11\":101,\"12\":211,\"13\":213,\"14\":209,\"15\":33,\"16\":44,\"17\":95,\"18\":169,\"19\":108,\"20\":83,\"21\":3,\"22\":190,\"23\":241,\"24\":130,\"25\":205,\"26\":126,\"27\":76,\"28\":173,\"29\":142,\"30\":77,\"31\":194}
             ```
             """
-        }
-      }
-      else '5b — release via TTP' {
-        app -> ttp "checkResource (encryptedMessage, nrr)" {
-          technology "HTTPS"
-          description "The app goes straight to the escrow; the CSS never sees the NRR."
-          notes """
+            }
+          }
+          else "5b — release via TTP" {
+            app -> ttp "checkResource (encryptedMessage, nrr)" {
+              technology "HTTPS"
+              description "The app goes straight to the escrow; the CSS never sees the NRR."
+              notes """
             Step **4** — the NRR it sends is the same **NonRepudiationDestination** VC the
             app signed in 5a (subject = requesterDid, requestedResource, signedHash = messageHash).
 
@@ -576,11 +775,11 @@ views {
             > Only `{ encryptedResource, nrr }` is sent — `requestedResource` and
             > `requesterDid` live inside the NRR subject, not as separate parameters.
             """
-        }
-        ttp -> app "keyForDecrypt" {
-          technology "HTTPS"
-          notes """
-            Response body: `{ "symKeyForDecrypt": <32-byte key>, "verification": {…}, "nrrRecordId": "64bd64e7c67b52dad2328ce10bb376feb322f7a2a0bdf0d39f4d9e62ccf7c759" }`
+            }
+            ttp -> app "keyForDecrypt" {
+              technology "HTTPS"
+              notes """
+            Response body: `{ \"symKeyForDecrypt\": <32-byte key>, \"verification\": {…}, \"nrrRecordId\": \"64bd64e7c67b52dad2328ce10bb376feb322f7a2a0bdf0d39f4d9e62ccf7c759\" }`
             (nrrRecordId captured from a live 5b run).
 
             > [!TIP]
@@ -588,6 +787,8 @@ views {
             > grow (stays empty), while the TTP's `nrr-audit` gains a record — that split
             > is how the two paths can be told apart.
             """
+            }
+          }
         }
       }
     }
