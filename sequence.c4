@@ -237,7 +237,7 @@ views {
       technology "HTTPS"
       description "WWW-Authenticate: didcomm proofRequest=[base64url JSON VPR]"
       notes """
-        `createDidcommAuthenticateHeader()` builds the challenge:
+        `createDidCommAuthenticateHeader()` builds the challenge:
 
         * a fresh **nonce** (challenge)
         * a **presentationExchange** proof request (VPR) on the `presexchange.jsonld` context
@@ -524,7 +524,7 @@ views {
         }
       }
       else "3b — only acl:NRRead granted" {
-        opt "only on the first NRRead, or after a TTP key refresh" {
+        opt "only on the first NRRead (\"TTP key refresh\" is a protocol option, not implemented in this demo)" {
           css -> ttp "didexchange/1.1 request" {
             technology "DIDComm"
             description "The CSS accepts the TTP's out-of-band invitation and proposes its peer DID."
@@ -735,7 +735,8 @@ views {
             ```
 
             > [!TIP]
-            > The CSS audit endpoint is `GET /detail/.internal/jws-audit/query` (demo: `:3002`).
+            > The CSS audit endpoint is `GET /.internal/jws-audit/query` (demo: `:3002`); the
+            > `/detail/` prefix returns `401` on this deployment.
             """
             }
             css -> app "keyfordecrypt header" {
