@@ -15,11 +15,33 @@ const Module = require('module');
 const { NodeSDK } = require('@opentelemetry/sdk-node');
 const { diag, DiagConsoleLogger, trace, SpanStatusCode } = require('@opentelemetry/api');
 const { getStringFromEnv, diagLogLevelFromString } = require('@opentelemetry/core');
-const { getNodeAutoInstrumentations } = require('@opentelemetry/auto-instrumentations-node');
-// Not a public export, but it is what the default register uses.
-const {
-  getResourceDetectorsFromEnv,
-} = require('/otel/node_modules/@opentelemetry/auto-instrumentations-node/build/src/utils.js');
+const autoInstrumentations = require('@opentelemetry/auto-instrumentations-node');
+const { getNodeAutoInstrumentations } = autoInstrumentations;
+// `getResourceDetectorsFromEnv` is not a public export, but it is what the
+// default register uses to honor OTEL_NODE_RESOURCE_DETECTORS. Its internal
+// location moved between versions (older: build/src/utils.js, 0.6x+/0.8x:
+// dist/utils.cjs), so resolve it defensively and fall back to the public API.
+function resolveGetResourceDetectorsFromEnv() {
+  const pkgDir = path.dirname(
+    require.resolve('@opentelemetry/auto-instrumentations-node')
+  );
+  for (const file of ['utils.cjs', 'utils.js', 'utils.mjs']) {
+    try {
+      const mod = require(path.join(pkgDir, file));
+      if (typeof mod.getResourceDetectorsFromEnv === 'function') {
+        return mod.getResourceDetectorsFromEnv;
+      }
+    } catch { /* try the next candidate */ }
+  }
+  // Public API: older releases export getResourceDetectorsFromEnv, newer ones
+  // only getResourceDetectors (all detectors, env filtering not applied).
+  return (
+    autoInstrumentations.getResourceDetectorsFromEnv ||
+    autoInstrumentations.getResourceDetectors ||
+    (() => [])
+  );
+}
+const getResourceDetectorsFromEnv = resolveGetResourceDetectorsFromEnv();
 
 const MAX = Number(process.env.VERA_PAYLOAD_MAX_LENGTH || 16384);
 const TEXTUAL = /json|text|xml|javascript|graphql|turtle|ld\+json|form-urlencoded/i;
@@ -109,7 +131,7 @@ function captureBodies() {
 }
 
 const headerLists = {
-  requestHeaders: ['agent', 'client', 'issuer', 'didvc', 'vp', 'signedresource', 'x-forwarded-host', 'x-forwarded-proto'],
+  requestHeaders: ['agent', 'client', 'issuer', 'didvc', 'vp', 'signedresource', 'ttpreceipt', 'x-forwarded-host', 'x-forwarded-proto'],
   responseHeaders: ['www-authenticate', 'encryptedresource', 'keyfordecrypt'],
 };
 

@@ -48,7 +48,16 @@ model {
       """
   }
 
-  // Canonical relationships (used by the context view; the dynamic view lists steps explicitly)
+  issuer = system "Secure Issuer" {
+    title "Secure Issuer — own SSI agent"
+    summary "Issues the ExampleDegreeCredential to the wallet (secure-issuer)."
+    description """
+      `did:web:secureissuer.solidcommunity.net:public`. Connects to the wallet over DIDComm
+      and runs the **issue-credential/2.0** protocol (LD-proof VC).
+      """
+  }
+
+  // Canonical relationships (used by the context view; the dynamic views list steps explicitly)
   user -[didcomm]-> app "connects via OOB invitation"
   user -[didcomm]-> app "returns Verifiable Presentation"
   app -[didcomm]-> user "forwards (signed/wrapped) proof request"
@@ -59,34 +68,532 @@ model {
   app -[http]-> ttp "checkResource (encryptedMessage, nrr)"
   ttp -[http]-> app "keyForDecrypt"
   app -> user "delivers plaintext resource (app-specific)"
+  issuer -[didcomm]-> user "issues ExampleDegreeCredential (issue-credential/2.0)"
+  css -[http]-> ttp "keyExchange (did, publicKey, signature)"
 }
 
 views {
-  dynamic view nr-read-flow {
+  // ---------------------------------------------------------------------------
+  // Captured run — credential issuance, rebuilt from Tempo (live run, 2026-11-23).
+  // Source traces: a37510f5… (invitation, connection, offer), 6d6a76eb… (request, issue, ack)
+  // ---------------------------------------------------------------------------
+  dynamic view credential-issuance-captured {
     variant sequence
 
-    title "Non-repudiable read — VERA protocol"
+    title "Credential issuance — captured run (Tempo)"
     description """
-      End-to-end walk of the non-repudiable read flow documented in `sequence.mmd`.
-      Participants mirror the containers in `docker-compose.yml`:
-      **demo-user** (wallet), **demo-app-1/2** (apps), **solid-css**, **demo-ttp**.
+      Prerequisite of the non-repudiable read, outside the ProVerif model: **secure-issuer** issues
+      the **ExampleDegreeCredential** to the wallet (**demo-user**) over DIDComm. Every DIDComm
+      message is authcrypt-encrypted on the wire; the notes show the decrypted plaintext captured
+      by the `didcomm.pack` / `didcomm.unpack` spans. Continues in `nr-read-flow-captured`.
       """
 
-        user -> app "didexchange/1.1 request" {
-      technology "DIDComm"
-      description "The wallet accepts the app's out-of-band invitation and proposes its peer DID."
+    user -> issuer "GET /generateInvitation" {
+      technology "HTTPS"
       notes """
-        The app generates an **out-of-band invitation**; the user pastes its URL into the wallet
-        (`POST /api/invitations` on demo-user), which resolves the app's did:web and starts the
-        handshake on demand.
+        The wallet UI (`POST` on demo-user, trace `a37510f5…`) asks the issuer for a DIDComm out-of-band
+        invitation: `GET http://secure-issuer:8080/generateInvitation`.
 
-        Captured OOB invitation (base64 `oob` query parameter of
-        `http://demo-app-1:3010?oob=…`, decoded from the wallet's `http.request.body`):
+        Response returned to the wallet UI:
+
+        ```json
+        {
+          "ok": true,
+          "issuerBaseUrl": "http://secure-issuer:8080",
+          "connectionId": "ebab40a8-5bc1-4e39-9029-3424c847ecc3",
+          "invitationUrl": "http://secure-issuer:3011?oob=eyJAdHlwZSI6Imh0dHBz…bGljIl19",
+          "normalizedInvitationUrl": "http://secure-issuer:3011?oob=eyJAdHlwZSI6Imh0dHBz…bGljIl19"
+        }
+        ```
+
+        Decoded `oob` parameter — the out-of-band invitation:
 
         ```json
         {
           "@type": "https://didcomm.org/out-of-band/1.1/invitation",
-          "@id": "ded321e0-123b-48d0-bb72-8e22dc63c512",
+          "@id": "74b556dd-1778-4f06-a998-640c4355a311",
+          "label": "SecureIssuer",
+          "accept": [
+            "didcomm/aip1",
+            "didcomm/aip2;env=rfc19"
+          ],
+          "handshake_protocols": [
+            "https://didcomm.org/didexchange/1.1",
+            "https://didcomm.org/connections/1.0"
+          ],
+          "services": [
+            "did:web:secureissuer.solidcommunity.net:public"
+          ]
+        }
+        ```
+        """
+    }
+
+    user -> issuer "didexchange/1.1 request" {
+      technology "DIDComm"
+      notes """
+        The wallet answers the invitation (`~thread.pthid` = invitation `@id`) and proposes a fresh
+        **peer DID** for this connection. `did_doc~attach` carries the peer DID document (service endpoint
+        `http://demo-user:3006`, Ed25519 authentication key, X25519 key agreement), signed with the wallet's
+        `did:web` key (`didlong`).
+
+        Wire format — POST `http://secure-issuer:3011/` (authcrypt JWM, header decoded):
+
+        ```json
+        {
+          "protected": {
+            "base64 (decoded)": {
+              "enc": "xchacha20poly1305_ietf",
+              "typ": "JWM/1.0",
+              "alg": "Authcrypt",
+              "recipients": [
+                {
+                  "encrypted_key": "o64u510DumC8rR4Fa5qw9KFzRhOoBdLH0ulvX-TfQPDyomgF7TnUnmw35xweiXRd",
+                  "header": {
+                    "kid": "Aa8eUmtQ1yv4fCSnv1FkWkn1FqpzJWmKauJ5JvAkjFoU",
+                    "sender": "PBNFu6xpFwsO6_M9jT8JgnbIe47tEzbc5GRroXGp9EQLIYmyFe…aWQSR4PU",
+                    "iv": "p9pLdcvzyFHK-AWL0aBAGpGgUNur3neA"
+                  }
+                }
+              ]
+            }
+          },
+          "ciphertext": "WOj3zM3ME7_ubT5WnuPTs0PojtYf38fN556kOv-nLudOSVyUxl…uZvotqls",
+          "iv": "Y23FLGaKwUXqXCVM",
+          "tag": "0VvKdjvHBS50ZrpZsijGCQ"
+        }
+        ```
+
+        Plaintext (`didcomm.pack` on demo-user):
+
+        ```json
+        {
+          "@type": "https://didcomm.org/didexchange/1.1/request",
+          "@id": "e6e1638f-e790-4378-b401-ceddc14f003a",
+          "label": "SecureUserWallettttt",
+          "did": "did:peer:1zQmcUrkEc6xwxvi8DApdXR6RnUsroCpbG9WcLkhipEerG5z",
+          "didlong": "did:web:bboi.solidcommunity.net:public",
+          "~thread": {
+            "pthid": "74b556dd-1778-4f06-a998-640c4355a311"
+          },
+          "did_doc~attach": {
+            "@id": "a41e0b64-4fbb-4b99-b4b4-d1920cc656ba",
+            "mime-type": "application/json",
+            "data": {
+              "base64 (decoded)": {
+                "@context": [
+                  "https://w3id.org/did/v1"
+                ],
+                "id": "did:peer:1zQmcUrkEc6xwxvi8DApdXR6RnUsroCpbG9WcLkhipEerG5z",
+                "service": [
+                  {
+                    "id": "#inline-0",
+                    "serviceEndpoint": "http://demo-user:3006",
+                    "type": "did-communication",
+                    "priority": 0,
+                    "recipientKeys": [
+                      "#key-1"
+                    ],
+                    "routingKeys": []
+                  }
+                ],
+                "authentication": [
+                  {
+                    "id": "#key-1",
+                    "type": "Ed25519VerificationKey2018",
+                    "controller": "#id",
+                    "publicKeyBase58": "7rJqD6bwQuTZzeAfDDkoQFtN2HAe5HB7T9cgeta41B9j"
+                  }
+                ],
+                "keyAgreement": [
+                  {
+                    "id": "#key-2",
+                    "type": "X25519KeyAgreementKey2019",
+                    "controller": "#id",
+                    "publicKeyBase58": "2fXth2RVmxa79LqgDVes3mFMC8FpHN7g5X62njxEpuGa"
+                  }
+                ]
+              },
+              "jws": {
+                "protected": "eyJhbGciOiJFZERTQSIsImp3ayI6eyJrdHkiOiJPS1AiLCJjcn…sNEkifX0",
+                "signature": "H1MoA6G-xRo2TweJfIqq7txtbog9KasXOffMWeC01GMZAJMb7c…a43u4zDA",
+                "header": {
+                  "kid": "did:key:z6MksJS85b7ugR3Mr5FVfGMeL4HB25uvEjrn8zXYzptUrzTb"
+                }
+              }
+            }
+          }
+        }
+        ```
+        """
+    }
+
+    issuer -> user "didexchange/1.1 response" {
+      technology "DIDComm"
+      notes """
+        The issuer accepts and returns its own peer DID document (endpoint `http://secure-issuer:3011`),
+        threaded to the request (`~thread.thid`).
+
+        Plaintext (`didcomm.pack` on secure-issuer):
+
+        ```json
+        {
+          "@type": "https://didcomm.org/didexchange/1.1/response",
+          "@id": "040e9b09-1937-40a1-9f47-b42bb2135571",
+          "did": "did:peer:1zQmSS8Wa981qHRaJZCUPEHb6yXphL7adiJHxcnPqh76NdMh",
+          "~thread": {
+            "thid": "e6e1638f-e790-4378-b401-ceddc14f003a"
+          },
+          "did_doc~attach": {
+            "@id": "5896e988-bd43-4650-b13f-a08ec7af342b",
+            "mime-type": "application/json",
+            "data": {
+              "base64 (decoded)": {
+                "@context": [
+                  "https://w3id.org/did/v1"
+                ],
+                "id": "did:peer:1zQmSS8Wa981qHRaJZCUPEHb6yXphL7adiJHxcnPqh76NdMh",
+                "service": [
+                  {
+                    "id": "#inline-0",
+                    "serviceEndpoint": "http://secure-issuer:3011",
+                    "type": "did-communication",
+                    "priority": 0,
+                    "recipientKeys": [
+                      "#key-1"
+                    ],
+                    "routingKeys": []
+                  }
+                ],
+                "authentication": [
+                  {
+                    "id": "#key-1",
+                    "type": "Ed25519VerificationKey2018",
+                    "controller": "#id",
+                    "publicKeyBase58": "EEr9Y67xkRVQfCsHXeNbNuNyre6wMZNSsDXynNQRj2xk"
+                  }
+                ],
+                "keyAgreement": [
+                  {
+                    "id": "#key-2",
+                    "type": "X25519KeyAgreementKey2019",
+                    "controller": "#id",
+                    "publicKeyBase58": "GnKT9e1SKobnuoo7vcuiYcUbAjca98cTftWNPSVeVQkN"
+                  }
+                ]
+              },
+              "jws": {
+                "protected": "eyJhbGciOiJFZERTQSIsImp3ayI6eyJrdHkiOiJPS1AiLCJjcn…kUjgifX0",
+                "signature": "hbia7MzzZkZF1FJyv_3uDrw_uwfpd8FH8bC4baHWPSXt8YG6La…7fQKzmAA",
+                "header": {
+                  "kid": "did:key:z6Mkp2Ph528qMXQXmhHVbaDbMrL15R6qiQ1gGvD19C8meUar"
+                }
+              }
+            }
+          }
+        }
+        ```
+        """
+    }
+
+    user -> issuer "didexchange/1.1 complete" {
+      technology "DIDComm"
+      notes """
+        Closes the handshake: from here on both sides encrypt with the peer DIDs' keys.
+
+        Plaintext:
+
+        ```json
+        {
+          "@type": "https://didcomm.org/didexchange/1.1/complete",
+          "@id": "a5d83dc1-6260-4a14-b4ee-d46a17fa9fa6",
+          "~thread": {
+            "thid": "e6e1638f-e790-4378-b401-ceddc14f003a",
+            "pthid": "74b556dd-1778-4f06-a998-640c4355a311"
+          },
+          "~transport": {
+            "return_route": "none"
+          }
+        }
+        ```
+        """
+    }
+
+    issuer -> user "basicmessage/1.0" {
+      technology "DIDComm"
+      notes """
+        Greeting sent by the issuer once the connection is active.
+
+        Plaintext:
+
+        ```json
+        {
+          "@type": "https://didcomm.org/basicmessage/1.0/message",
+          "@id": "edec6885-8d28-4fa5-a4d2-65828dd873ab",
+          "sent_time": "2026-11-23T17:58:42.975Z",
+          "content": "Hello, we can start to communicate",
+          "~l10n": {
+            "locale": "en"
+          }
+        }
+        ```
+        """
+    }
+
+    issuer -> user "issue-credential/2.0 offer-credential" {
+      technology "DIDComm"
+      notes """
+        The issuer offers an **ExampleDegreeCredential** for the wallet's `did:web`
+        (`aries/ld-proof-vc-detail@v1.0`: credential body plus the proof options it will use).
+
+        Plaintext (attachment decoded):
+
+        ```json
+        {
+          "@type": "https://didcomm.org/issue-credential/2.0/offer-credential",
+          "@id": "967d4bc7-9a4a-4bb8-adec-0e1ba24121a4",
+          "formats": [
+            {
+              "attach_id": "2d04d7b9-e4d5-4cc2-a44f-1050e7b63253",
+              "format": "aries/ld-proof-vc-detail@v1.0"
+            }
+          ],
+          "credential_preview": {
+            "@type": "https://didcomm.org/issue-credential/2.0/credential-preview",
+            "attributes": []
+          },
+          "offers~attach": [
+            {
+              "@id": "2d04d7b9-e4d5-4cc2-a44f-1050e7b63253",
+              "mime-type": "application/json",
+              "data": {
+                "base64 (decoded)": {
+                  "credential": {
+                    "@context": [
+                      "https://www.w3.org/2018/credentials/v1",
+                      "https://www.w3.org/2018/credentials/examples/v1"
+                    ],
+                    "id": "https://example.com/credentials/321122",
+                    "type": [
+                      "VerifiableCredential",
+                      "ExampleDegreeCredential"
+                    ],
+                    "issuer": "did:web:secureissuer.solidcommunity.net:public",
+                    "issuanceDate": "2010-01-01T19:23:24Z",
+                    "credentialSubject": {
+                      "id": "did:web:bboi.solidcommunity.net:public",
+                      "degree": {
+                        "type": "ExampleBachelorDegree",
+                        "name": "Engineering"
+                      }
+                    }
+                  },
+                  "options": {
+                    "proofPurpose": "assertionMethod",
+                    "proofType": "Ed25519Signature2018"
+                  }
+                }
+              }
+            }
+          ],
+          "~thread": {
+            "thid": "aa736a1d-4fae-48a4-bbd6-861ada44c67b"
+          }
+        }
+        ```
+        """
+    }
+
+    user -> issuer "issue-credential/2.0 request-credential" {
+      technology "DIDComm"
+      notes """
+        The user accepts the offer in the wallet UI (trace `6d6a76eb…`); the wallet requests exactly the
+        offered credential.
+
+        Plaintext (attachment decoded):
+
+        ```json
+        {
+          "@type": "https://didcomm.org/issue-credential/2.0/request-credential",
+          "@id": "005a6fd9-d02a-456f-acc3-ba4ec782150e",
+          "formats": [
+            {
+              "attach_id": "af08e298-0451-4d77-aa85-1b39e35f9dae",
+              "format": "aries/ld-proof-vc-detail@v1.0"
+            }
+          ],
+          "requests~attach": [
+            {
+              "@id": "af08e298-0451-4d77-aa85-1b39e35f9dae",
+              "mime-type": "application/json",
+              "data": {
+                "base64 (decoded)": {
+                  "credential": {
+                    "@context": [
+                      "https://www.w3.org/2018/credentials/v1",
+                      "https://www.w3.org/2018/credentials/examples/v1"
+                    ],
+                    "id": "https://example.com/credentials/321122",
+                    "type": [
+                      "VerifiableCredential",
+                      "ExampleDegreeCredential"
+                    ],
+                    "issuer": "did:web:secureissuer.solidcommunity.net:public",
+                    "issuanceDate": "2010-01-01T19:23:24Z",
+                    "credentialSubject": {
+                      "id": "did:web:bboi.solidcommunity.net:public",
+                      "degree": {
+                        "type": "ExampleBachelorDegree",
+                        "name": "Engineering"
+                      }
+                    }
+                  },
+                  "options": {
+                    "proofPurpose": "assertionMethod",
+                    "proofType": "Ed25519Signature2018"
+                  }
+                }
+              }
+            }
+          ],
+          "~attach": [],
+          "~thread": {
+            "thid": "aa736a1d-4fae-48a4-bbd6-861ada44c67b"
+          }
+        }
+        ```
+        """
+    }
+
+    issuer -> user "issue-credential/2.0 issue-credential" {
+      technology "DIDComm"
+      notes """
+        `vc.issue` on secure-issuer signs the credential (`Ed25519Signature2018`, `assertionMethod`);
+        the wallet checks it with `vc.verifyCredential` and stores it.
+
+        Plaintext (attachment decoded — the signed VC):
+
+        ```json
+        {
+          "@type": "https://didcomm.org/issue-credential/2.0/issue-credential",
+          "@id": "72a37501-2b84-49c9-af6c-f3dc0efb0396",
+          "formats": [
+            {
+              "attach_id": "6db40718-f5ba-4ad7-a75c-912724cc5d3a",
+              "format": "aries/ld-proof-vc@v1.0"
+            }
+          ],
+          "credentials~attach": [
+            {
+              "@id": "6db40718-f5ba-4ad7-a75c-912724cc5d3a",
+              "mime-type": "application/json",
+              "data": {
+                "base64 (decoded)": {
+                  "@context": [
+                    "https://www.w3.org/2018/credentials/v1",
+                    "https://www.w3.org/2018/credentials/examples/v1"
+                  ],
+                  "id": "https://example.com/credentials/321122",
+                  "type": [
+                    "VerifiableCredential",
+                    "ExampleDegreeCredential"
+                  ],
+                  "issuer": "did:web:secureissuer.solidcommunity.net:public",
+                  "issuanceDate": "2010-01-01T19:23:24Z",
+                  "credentialSubject": {
+                    "degree": {
+                      "type": "ExampleBachelorDegree",
+                      "name": "Engineering"
+                    },
+                    "id": "did:web:bboi.solidcommunity.net:public"
+                  },
+                  "proof": {
+                    "verificationMethod": "did:web:secureissuer.solidcommunity.net:public#z6M…9C8meUar",
+                    "type": "Ed25519Signature2018",
+                    "created": "2026-11-23T17:59:00Z",
+                    "proofPurpose": "assertionMethod",
+                    "jws": "eyJhbGciOiJFZERTQSIsImI2NCI6ZmFsc2UsImNyaXQiOlsiYj…YfE_uBAw"
+                  }
+                }
+              }
+            }
+          ],
+          "~thread": {
+            "thid": "aa736a1d-4fae-48a4-bbd6-861ada44c67b"
+          },
+          "~please_ack": {
+            "on": [
+              "RECEIPT"
+            ]
+          }
+        }
+        ```
+        """
+    }
+
+    user -> issuer "issue-credential/2.0 ack" {
+      technology "DIDComm"
+      notes """
+        Acknowledges receipt (`~please_ack` of the previous message).
+
+        Plaintext:
+
+        ```json
+        {
+          "@type": "https://didcomm.org/issue-credential/2.0/ack",
+          "@id": "8142044e-3a44-4cab-81ca-008f9dedb514",
+          "status": "OK",
+          "~thread": {
+            "thid": "aa736a1d-4fae-48a4-bbd6-861ada44c67b"
+          }
+        }
+        ```
+        """
+    }
+  }
+
+  // ---------------------------------------------------------------------------
+  // Captured runs — rebuilt from Tempo spans (live runs, 2026-11-23).
+  // Message numbers follow the ProVerif model didcomm_ver_upd_agreement_complete_23nov.pv
+  // (verifier V = CSS). Source traces:
+  //   run 1, release via CSS (5a): 219fcbd5… 478d500f… 3323226b… 3c58b6bb… 28e7f75c… 9a67fc35… 6ed104ef… 4fbb8cd9… 47686a35…
+  //   run 2, release via TTP (5b): c37b5723… ee3fa6a0… 401c8ab5… 75942e00… 52b3f72b… 714252ce… 3472aa18… d505b100…
+  //   run 3, trusted hospital (3a): c79a3b2a… 70fd58cd… 7f44656d… 170830e9… b31760ef… 25118f7e… 19f064f2…
+  // ---------------------------------------------------------------------------
+  dynamic view nr-read-flow-captured {
+    variant sequence
+
+    title "Non-repudiable read — captured runs (Tempo)"
+    description """
+      Every cross-service message of three live runs, rebuilt from the OpenTelemetry spans in Tempo
+      (**demo-user** = wallet, **demo-app-1** = Private Clinic, **demo-app-2** = Public Hospital,
+      **solid-css**, **demo-ttp**). Labels carry the message number of the ProVerif model.
+      DIDComm messages are authcrypt-encrypted on the wire: notes show the decrypted plaintext
+      captured by the `didcomm.pack` / `didcomm.unpack` spans. Polling, static assets and
+      did/context resolution are left out. The wallet already holds the credential:
+      see `credential-issuance-captured`.
+      """
+
+    user -> app "m1 · didexchange/1.1 request" {
+      technology "DIDComm"
+      notes """
+        **Phase 1 — connection** (traces `219fcbd5…`, `478d500f…`). The app UI calls `GET /generateInvitation`
+        and shows the invitation; the user pastes it into the wallet (`POST` on demo-user).
+
+        Invitation returned by the app:
+
+        ```json
+        {
+          "url": "http://demo-app-1:3010?oob=eyJAdHlwZSI6Imh0dHBzOi8…bGljIl19"
+        }
+        ```
+
+        Decoded `oob` — the out-of-band invitation (`label` = Private Clinic):
+
+        ```json
+        {
+          "@type": "https://didcomm.org/out-of-band/1.1/invitation",
+          "@id": "16dfc00d-f7fa-4aa3-8fe8-c3913ac49100",
           "label": "Private Clinic",
           "accept": [
             "didcomm/aip1",
@@ -102,33 +609,89 @@ views {
         }
         ```
 
-        `~thread.pthid` of the request is the `@id` of this invitation. `did_doc~attach` carries the
-        wallet **peer DID** document (service endpoint `http://demo-user:3006`), signed with the
-        user's did:web key (`kid` = `did:key:z6MksJS8…UrzTb`).
+        The wallet answers with a fresh **peer DID** whose document (`did_doc~attach`) is signed with the
+        user's `did:web` key.
 
-        Tempo: `didcomm.pack` on `demo-user` (direction=out, encrypted, recipients=1) and
-        `didcomm.unpack` on `demo-app-1` (direction=in), same `@id`.
+        Wire format — POST `http://demo-app-1:3010/` (authcrypt JWM, header decoded):
 
-        Captured `didcomm.payload`:
+        ```json
+        {
+          "protected": {
+            "base64 (decoded)": {
+              "enc": "xchacha20poly1305_ietf",
+              "typ": "JWM/1.0",
+              "alg": "Authcrypt",
+              "recipients": [
+                {
+                  "encrypted_key": "_prI-oVVuyUQy9LgoJWJnF6YRb-PgO8NfZctOqEXfXcTlF_s0uJYFgcVLkBqPm-O",
+                  "header": {
+                    "kid": "HgRt92NuzosbKRgN4wbebNzMDFESsYo8wYCT33wTM3K3",
+                    "sender": "jxl4ld-gYcqoU8jp3PcKEfARqWv37mCOqaX2Oq8NOk5_zbEDLN…2Vz_HEno",
+                    "iv": "49_XkYHu6RRCZnjSqL0INnbWBnX_wWFh"
+                  }
+                }
+              ]
+            }
+          },
+          "ciphertext": "cwfuplgw7jVNY5PXgMAgvdxsyj-utVSqvEsBJpME_oK5Lz-ySP…ga2HPDxK",
+          "iv": "6FK5D28sR3JML8h_",
+          "tag": "Fyt4APi87vtcwkYdFF0bCw"
+        }
+        ```
+
+        Plaintext (`didcomm.pack` on demo-user):
 
         ```json
         {
           "@type": "https://didcomm.org/didexchange/1.1/request",
-          "@id": "a0d9d359-e490-4549-b120-db71e5c7a702",
+          "@id": "c75f3112-da66-4178-986c-8f36162b271e",
           "label": "SecureUserWallettttt",
-          "did": "did:peer:1zQmNY6uVkpd1bzKpwQk4H1ziQDsXAqSogLyhNMQzd1usarf",
+          "did": "did:peer:1zQmYwEfqKhXHaNrFr6EirrnjymqUC77K2MZHSzQKQFGdBqm",
           "didlong": "did:web:bboi.solidcommunity.net:public",
           "~thread": {
-            "pthid": "ded321e0-123b-48d0-bb72-8e22dc63c512"
+            "pthid": "16dfc00d-f7fa-4aa3-8fe8-c3913ac49100"
           },
           "did_doc~attach": {
-            "@id": "e5540bb8-496f-4c1f-a7c4-a7ea8707fe09",
+            "@id": "c25b11fd-3004-493a-a43e-7ddecafcf1df",
             "mime-type": "application/json",
             "data": {
-              "base64": "eyJAY29udGV4dCI6WyJodHRwczovL3czaWQub3JnL2RpZC92MSJdLCJpZCI6ImRpZDpwZWVyOjF6UW1OWTZ1VmtwZDFiektwd1FrNEgxemlRRHNYQXFTb2dMeWhOTVF6ZDF1c2FyZiIsInNlcnZpY2UiOlt7ImlkIjoiI2lubGluZS0wIiwic2VydmljZUVuZHBvaW50IjoiaHR0cDovL2RlbW8tdXNlcjozMDA2IiwidHlwZSI6ImRpZC1jb21tdW5pY2F0aW9uIiwicHJpb3JpdHkiOjAsInJlY2lwaWVudEtleXMiOlsiI2tleS0xIl0sInJvdXRpbmdLZXlzIjpbXX1dLCJhdXRoZW50aWNhdGlvbiI6W3siaWQiOiIja2V5LTEiLCJ0eXBlIjoiRWQyNTUxOVZlcmlmaWNhdGlvbktleTIwMTgiLCJjb250cm9sbGVyIjoiI2lkIiwicHVibGljS2V5QmFzZTU4IjoiRVpyRlY4VUtQdnVBcFpObUxEREFaQmVzZ1V5WW9HNWNzd2VZUUNXSFNWdGsifV0sImtleUFncmVlbWVudCI6W3siaWQiOiIja2V5LTIiLCJ0eXBlIjoiWDI1NTE5S2V5QWdyZWVtZW50S2V5MjAxOSIsImNvbnRyb2xsZXIiOiIjaWQiLCJwdWJsaWNLZXlCYXNlNTgiOiJHb1dCUFR1REdKeWNSaTFIYmNHejJOTlFLNDl0R2RQaDJxb2luTlNDQnVtayJ9XX0=",
+              "base64 (decoded)": {
+                "@context": [
+                  "https://w3id.org/did/v1"
+                ],
+                "id": "did:peer:1zQmYwEfqKhXHaNrFr6EirrnjymqUC77K2MZHSzQKQFGdBqm",
+                "service": [
+                  {
+                    "id": "#inline-0",
+                    "serviceEndpoint": "http://demo-user:3006",
+                    "type": "did-communication",
+                    "priority": 0,
+                    "recipientKeys": [
+                      "#key-1"
+                    ],
+                    "routingKeys": []
+                  }
+                ],
+                "authentication": [
+                  {
+                    "id": "#key-1",
+                    "type": "Ed25519VerificationKey2018",
+                    "controller": "#id",
+                    "publicKeyBase58": "Ezab3aLKSEySRFFVKgJCyg6KEXpcaQbLgJU3vBkS1tD4"
+                  }
+                ],
+                "keyAgreement": [
+                  {
+                    "id": "#key-2",
+                    "type": "X25519KeyAgreementKey2019",
+                    "controller": "#id",
+                    "publicKeyBase58": "BZ799sfQMUt6bxL8cZai8KcBh7NDmvhVensCJ9GbCEye"
+                  }
+                ]
+              },
               "jws": {
-                "protected": "eyJhbGciOiJFZERTQSIsImp3ayI6eyJrdHkiOiJPS1AiLCJjcnYiOiJFZDI1NTE5IiwieCI6InZ1VVk2TmxDa1RQb25Kemo3OFowRnlLOUhiNGxkcE9udnlpc0tQaDBsNEkifX0",
-                "signature": "zi_6UVSrWmGGJo8LDuLKtkn8jZBVDpYzJ3SMQCXC-ftP40CP-zvNl1aPaeS_tq9LpLOE5nmvtyiYK7tYzXyXBw",
+                "protected": "eyJhbGciOiJFZERTQSIsImp3ayI6eyJrdHkiOiJPS1AiLCJjcn…sNEkifX0",
+                "signature": "QKctzbrIHmCvw5-lqcpQQx6WE94yoeIF2J8bTyD1bxPOGeuNtY…FV9TGJBg",
                 "header": {
                   "kid": "did:key:z6MksJS85b7ugR3Mr5FVfGMeL4HB25uvEjrn8zXYzptUrzTb"
                 }
@@ -140,35 +703,63 @@ views {
         """
     }
 
-    app -> user "didexchange/1.1 response" {
+    app -> user "m2 · didexchange/1.1 response" {
       technology "DIDComm"
-      description "The app answers with its own peer DID for this connection."
       notes """
-        `~thread.thid` is the `@id` of the request. `did_doc~attach` carries the app **peer DID**
-        document (service endpoint `http://demo-app-1:3010`), signed with the app's did:web key
-        (`kid` = `did:key:z6Mkw8gv…UGG6R`, the Private Clinic verification method).
+        The app returns its own peer DID document (endpoint `http://demo-app-1:3010`), signed with the
+        app's `did:web` key and threaded to m1.
 
-        Tempo: `didcomm.pack` on `demo-app-1` (direction=out, encrypted, recipients=1) and
-        `didcomm.unpack` on `demo-user` (direction=in), same `@id`.
-
-        Captured `didcomm.payload`:
+        Plaintext (`didcomm.pack` on demo-app-1):
 
         ```json
         {
           "@type": "https://didcomm.org/didexchange/1.1/response",
-          "@id": "2f753e27-2586-48f3-84c5-bd5d142ab826",
-          "did": "did:peer:1zQmRyQh2GhwpPJtPPsojSEDc6WB9o5cC7N3vwVTCCLtApJS",
+          "@id": "63f56197-f61f-40ef-b305-e9677619c832",
+          "did": "did:peer:1zQmTkCb8hQyGW6weqp8hRSjedXywmzyncmHeeATa8KT4fUo",
           "~thread": {
-            "thid": "a0d9d359-e490-4549-b120-db71e5c7a702"
+            "thid": "c75f3112-da66-4178-986c-8f36162b271e"
           },
           "did_doc~attach": {
-            "@id": "9f9e131d-4359-447e-a68a-615ab9329569",
+            "@id": "7d8f2c69-3318-492d-9d63-0acb6b8bef72",
             "mime-type": "application/json",
             "data": {
-              "base64": "eyJAY29udGV4dCI6WyJodHRwczovL3czaWQub3JnL2RpZC92MSJdLCJpZCI6ImRpZDpwZWVyOjF6UW1SeVFoMkdod3BQSnRQUHNvalNFRGM2V0I5bzVjQzdOM3Z3VlRDQ0x0QXBKUyIsInNlcnZpY2UiOlt7ImlkIjoiI2lubGluZS0wIiwic2VydmljZUVuZHBvaW50IjoiaHR0cDovL2RlbW8tYXBwLTE6MzAxMCIsInR5cGUiOiJkaWQtY29tbXVuaWNhdGlvbiIsInByaW9yaXR5IjowLCJyZWNpcGllbnRLZXlzIjpbIiNrZXktMSJdLCJyb3V0aW5nS2V5cyI6W119XSwiYXV0aGVudGljYXRpb24iOlt7ImlkIjoiI2tleS0xIiwidHlwZSI6IkVkMjU1MTlWZXJpZmljYXRpb25LZXkyMDE4IiwiY29udHJvbGxlciI6IiNpZCIsInB1YmxpY0tleUJhc2U1OCI6IjdpTktIYXMzbXJINU45bWlQaHdkeGhybnQzZm5XUlh4ZjhSSHVqc0tQb2VyIn1dLCJrZXlBZ3JlZW1lbnQiOlt7ImlkIjoiI2tleS0yIiwidHlwZSI6IlgyNTUxOUtleUFncmVlbWVudEtleTIwMTkiLCJjb250cm9sbGVyIjoiI2lkIiwicHVibGljS2V5QmFzZTU4IjoiSDV6ajdiUjdOU2Q5TWk2a2tDZjhSaVY2bVNDOFFQQ1N0ZUp0VnpjdUVYc1EifV19",
+              "base64 (decoded)": {
+                "@context": [
+                  "https://w3id.org/did/v1"
+                ],
+                "id": "did:peer:1zQmTkCb8hQyGW6weqp8hRSjedXywmzyncmHeeATa8KT4fUo",
+                "service": [
+                  {
+                    "id": "#inline-0",
+                    "serviceEndpoint": "http://demo-app-1:3010",
+                    "type": "did-communication",
+                    "priority": 0,
+                    "recipientKeys": [
+                      "#key-1"
+                    ],
+                    "routingKeys": []
+                  }
+                ],
+                "authentication": [
+                  {
+                    "id": "#key-1",
+                    "type": "Ed25519VerificationKey2018",
+                    "controller": "#id",
+                    "publicKeyBase58": "6WDFJt1ccyPfgtLxt9agCzKYegVmrHk8KByAj2QgVXyW"
+                  }
+                ],
+                "keyAgreement": [
+                  {
+                    "id": "#key-2",
+                    "type": "X25519KeyAgreementKey2019",
+                    "controller": "#id",
+                    "publicKeyBase58": "DtGEBppWCNGn79XgGDH28gyLhfZm98d47bAWfCq9W4bb"
+                  }
+                ]
+              },
               "jws": {
-                "protected": "eyJhbGciOiJFZERTQSIsImp3ayI6eyJrdHkiOiJPS1AiLCJjcnYiOiJFZDI1NTE5IiwieCI6Ijk5VEd0UEFNU3ROZ1Z5b1N2cWJIdzF6RUlRUjYyLWVSTlphR1F6R1RBbDQifX0",
-                "signature": "1JthA0b8SsUMe2Zq7nkSthfll7Y1ntd50fTPeGKngziqXiwxGheR16xYVD07UsPW4SZ3_iymn1_sAQ6G3bRoDQ",
+                "protected": "eyJhbGciOiJFZERTQSIsImp3ayI6eyJrdHkiOiJPS1AiLCJjcn…BbDQifX0",
+                "signature": "PLmYlnYJiv-h72xhrAcxxhwPsmeOIaGT4K3wIkgNHLvazAleQ9…jA2qnPAQ",
                 "header": {
                   "kid": "did:key:z6Mkw8gvjGdMLMN4RvX4kWZVSUYM2pWJHS3VdZ7NsKuUGG6R"
                 }
@@ -180,635 +771,844 @@ views {
         """
     }
 
-    user -> app "didexchange/1.1 complete" {
+    user -> app "m3 · didexchange/1.1 complete" {
       technology "DIDComm"
-      description "The wallet confirms; the connection is ready."
       notes """
-        Closes the thread opened by the request (`thid`) under the same invitation (`pthid`).
+        Closes the handshake; the connection is active (`connectionId 82e22ad5-f549-415e-a86a-3667327a049f`).
 
-        Tempo: `didcomm.pack` on `demo-user` (direction=out, encrypted, recipients=1) and
-        `didcomm.unpack` on `demo-app-1` (direction=in), same `@id`.
-
-        Captured `didcomm.payload`:
+        Plaintext:
 
         ```json
         {
           "@type": "https://didcomm.org/didexchange/1.1/complete",
-          "@id": "cb2bd9e5-4105-4d3a-bf30-40db6e222319",
+          "@id": "c376e501-60c3-4acc-a37e-3485d1289ce5",
           "~thread": {
-            "thid": "a0d9d359-e490-4549-b120-db71e5c7a702",
-            "pthid": "ded321e0-123b-48d0-bb72-8e22dc63c512"
+            "thid": "c75f3112-da66-4178-986c-8f36162b271e",
+            "pthid": "16dfc00d-f7fa-4aa3-8fe8-c3913ac49100"
           },
           "~transport": {
             "return_route": "none"
           }
         }
         ```
-
-        > [!NOTE]
-        > After the exchange both sides have authorized each other:
-        >
-        > * App authorized *(for the User)*
-        > * User authorized *(for the App)*
         """
     }
 
-
-    app -> css "GET resource" {
+    app -> css "m4 · GET resource (agent, client, issuer, didvc)" {
       technology "HTTPS"
-      description "Declares the agent/issuer/client triple the ACR is matched against."
       notes """
-        Headers sent by the app (captured live, demo-app-1 → solid-css):
+        **Phase 2 — access request** (traces `3323226b…` OPTIONS, `3c58b6bb…` GET).
+        `GET /my-pod/test-folder/dual-mode-resource.txt`. In the model m4 = (DID_i, DID_u, DID_a, uri):
+        the issuer the user trusts, the user, the app and the resource.
 
-        ```
-        didvc: true
-        agent:  did:web:bboi.solidcommunity.net:public
-        client: did:web:privateclinic.solidcommunity.net:public
-        issuer: did:web:secureissuer.solidcommunity.net:public
-        ```
+        Request headers:
 
-        > [!NOTE]
-        > These are plain HTTP *headers*, not DIDComm — the old `DID_a/DID_i/DID_u`
-        > labels in `sequence.mmd` were renamed to the actual wire format.
+        ```json
+        {
+          "agent": "did:web:bboi.solidcommunity.net:public",
+          "client": "did:web:privateclinic.solidcommunity.net:public",
+          "issuer": "did:web:secureissuer.solidcommunity.net:public",
+          "didvc": "true"
+        }
+        ```
         """
     }
 
-    css -> app "401 Unauthorized — didcomm proofRequest" {
+    css -> app "VPR · 401 www-authenticate: didcomm proofRequest" {
       technology "HTTPS"
-      description "WWW-Authenticate: didcomm proofRequest=[base64url JSON VPR]"
       notes """
-        `createDidCommAuthenticateHeader()` builds the challenge:
+        The CSS answers with the **Verifiable Presentation Request** (VPR in the model: attributes, uri,
+        `nc`, DID_v). It travels base64-encoded in `www-authenticate: didcomm proofRequest="…"`.
+        `options.challenge` is the nonce **n_c** that ends up in Y and in the commitment C;
+        `requestACP` binds the request to target, owner, issuer, client and agent.
 
-        * a fresh **nonce** (challenge)
-        * a **presentationExchange** proof request (VPR) on the `presexchange.jsonld` context
-        * the **nonce → domain** mapping is kept server-side
-
-        > [!IMPORTANT]
-        > The header value is `didcomm proofRequest=\"<base64url JSON VPR>\"` — singular
-        > *proofRequest*, not `proofRequests=`.
-
-        Captured response header (live run):
-
-        ```
-        www-authenticate: didcomm proofRequest=\"eyJAY29udGV4dCI6WyJodHRwczovL2Jib2ku…\"
-        ```
-
-        Decoded payload (input_descriptors shortened):
+        Decoded `proofRequest`:
 
         ```json
         {
-          \"@context\": [\"https://bboi.solidcommunity.net/public/schemas/2024/presexchange.jsonld\"],
-          \"type\": [\"VerifiablePresentationRequest\"],
-          \"presentation_definition\": {
-            \"id\": \"32f54163-7166-48f1-93d8-ff217bdb0653\",
-            \"input_descriptors\": [{ \"id\": \"unisa_student\", \"constraints\": { \"fields\": [{ \"path\": [\"$.credentialSubject.degree\", \"$.credentialSubject.claims.degree\"] }] } }],
-            \"format\": {
-              \"ldp_vc\": { \"proof_type\": [\"JsonWebSignature2020\", \"Ed25519Signature2018\", \"EcdsaSecp256k1Signature2019\", \"RsaSignature2018\"] },
-              \"ldp_vp\": { \"proof_type\": [\"Ed25519Signature2018\"] }
-            },
-            \"requestACP\": {
-              \"type\": [\"ACPContext\"],
-              \"target\": \"http://localhost:3002/my-pod/test-folder/dual-mode-resource.txt\",
-              \"owner\": \"did:web:raw.githubusercontent.com:biagioboi:CommunitySolidServer:main\",
-              \"issuer\": \"did:web:secureissuer.solidcommunity.net:public\",
-              \"client\": \"did:web:privateclinic.solidcommunity.net:public\",
-              \"agent\": \"did:web:bboi.solidcommunity.net:public\"
-            }
-          },
-          \"options\": {
-            \"challenge\": \"JSciO4rWx1aKr08ypPMHFQ==\",
-            \"domain\": \"https://bboi.solidcommunity.net/definition/ourProtocol#test\"
-          }
-        }
-        ```
-        """
-    }
-
-    app -> user "Forward (signed/wrapped) proof request" {
-      technology "DIDComm"
-      description "present-proof v2; the app wraps and signs the VPR before forwarding."
-      notes """
-        > [!NOTE]
-        > Signing the wrapped VPR (`Ed25519Signature2018`) canonicalizes JSON-LD, so
-        > `wrappedvp.jsonld` / `wrappedvpr.jsonld` / `protocol.jsonld` must be reachable
-        > (served by `did-host` in this demo).
-
-        DIDComm wire: `present-proof/2.0/request-presentation` (direction=out, encrypted,
-        recipients=1 — observed in Tempo).
-
-        Captured signed wrapper (Tempo `vera.signed` — proof shortened):
-
-        ```json
-        {
-          \"@context\": [\"https://bboi.solidcommunity.net/public/schemas/2024/wrappedvpr.jsonld\"],
-          \"id\": \"https://example.com/wrappedVPR/321122\",
-          \"type\": [\"VerifiablePresentationRequestWrapper\"],
-          \"wrappedVPR\": { \"…\": \"the full VPR below (Tempo `vera.vpr`)\" },
-          \"proof\": { \"…\": \"Ed25519Signature2018 by the app (signWrappedPresentationRequest)\" }
-        }
-        ```
-
-        Full VPR it wraps (captured `vera.vpr`):
-
-        ```json
-        {
-          \"@context\": [\"https://bboi.solidcommunity.net/public/schemas/2024/presexchange.jsonld\"],
-          \"type\": [\"VerifiablePresentationRequest\"],
-          \"presentation_definition\": {
-            \"id\": \"32f54163-7166-48f1-93d8-ff217bdb0653\",
-            \"input_descriptors\": [
-              {
-                \"id\": \"unisa_student\",
-                \"name\": \"University of Salerno Demo\",
-                \"purpose\": \"Demonstrate to be a student from the University of Salerno to access this POD\",
-                \"constraints\": { \"fields\": [{ \"path\": [\"$.credentialSubject.degree\", \"$.credentialSubject.claims.degree\"] }] }
-              }
-            ],
-            \"format\": {
-              \"ldp_vc\": { \"proof_type\": [\"JsonWebSignature2020\", \"Ed25519Signature2018\", \"EcdsaSecp256k1Signature2019\", \"RsaSignature2018\"] },
-              \"ldp_vp\": { \"proof_type\": [\"Ed25519Signature2018\"] },
-              \"ldp\": { \"proof_type\": [\"RsaSignature2018\"] }
-            },
-            \"requestACP\": {
-              \"type\": [\"ACPContext\"],
-              \"target\": \"http://localhost:3002/my-pod/test-folder/dual-mode-resource.txt\",
-              \"owner\": \"did:web:raw.githubusercontent.com:biagioboi:CommunitySolidServer:main\",
-              \"issuer\": \"did:web:secureissuer.solidcommunity.net:public\",
-              \"client\": \"did:web:publichospital.solidcommunity.net:public\",
-              \"agent\": \"did:web:bboi.solidcommunity.net:public\"
-            }
-          },
-          \"options\": {
-            \"challenge\": \"LFUFcnbprftrb9uKLq3ihw==\",
-            \"domain\": \"https://bboi.solidcommunity.net/definition/ourProtocol#test\"
-          }
-        }
-        ```
-
-        Captured DIDComm wire message (`didcomm.payload` of `present-proof/2.0/request-presentation`, direction=out, encrypted — the attachment `data.json` abbreviates the wrapper shown above and adds `termsAndCondition` + the app's signature):
-
-        ```json
-        {
-          \"@type\": \"https://didcomm.org/present-proof/2.0/request-presentation\",
-          \"will_confirm\": true,
-          \"present_multiple\": false,
-          \"formats\": [{ \"attach_id\": \"bd9ae9d1-5382-439b-b7a8-cc917700eb5f\", \"format\": \"dif/presentation-exchange/definitions@v1.0\" }],
-          \"request_presentations~attach\": [
-            {
-              \"@id\": \"bd9ae9d1-5382-439b-b7a8-cc917700eb5f\",
-              \"mime-type\": \"application/json\",
-              \"data\": { \"json\": {
-                \"…\": \"the wrapped VPR above, plus:\",
-                \"termsAndCondition\": {
-                  \"type\": [\"ACPContext\"],
-                  \"target\": \"http://localhost:3002/my-pod/test-folder/dual-mode-resource.txt\",
-                  \"owner\": \"did:web:raw.githubusercontent.com:biagioboi:CommunitySolidServer:main\",
-                  \"issuer\": \"did:web:secureissuer.solidcommunity.net:public\",
-                  \"client\": \"did:web:publichospital.solidcommunity.net:public\",
-                  \"agent\": \"did:web:bboi.solidcommunity.net:public\"
-                },
-                \"proof\": [
-                  null,
-                  {
-                    \"verificationMethod\": \"did:web:publichospital.solidcommunity.net:public#z6MkrqvuwGXj6LPrrqbcgYbcQyKYp5WTzuB1yx68V52h4fpQ\",
-                    \"type\": \"Ed25519Signature2018\",
-                    \"created\": \"2026-10-07T03:46:32Z\",
-                    \"proofPurpose\": \"assertionMethod\",
-                    \"jws\": \"eyJhbGciOiJFZERTQSIsImI2NCI6ZmFsc2UsImNyaXQiOlsiYjY0Il19..L2TUd_DgYXrZ50ByR0v8rR5RWAhUwnITUJJGvBhzO2_-aXIe9Y5UuIXTLraTr_bZ6HFk8kaJU3eftMZEax1UDQ\"
-                  }
-                ]
-              } }
-            }
+          "@context": [
+            "https://bboi.solidcommunity.net/public/schemas/202…e.jsonld"
           ],
-          \"@id\": \"99063dd8-5d99-4f3f-9dc8-45f9f3d70743\",
-          \"~thread\": { \"thid\": \"dd2d0459-75b2-4d6a-ae50-0e392d9e7fa5\" }
-        }
-        ```
-        """
-    }
-
-    user -> app "Verifiable Presentation" {
-      technology "DIDComm"
-      description "agent / issuer / client DIDs, proof over challenge=nonce"
-      notes """
-        The wallet shares the **ExampleDegreeCredential** as a presentation over the challenge.
-
-        Captured VP JSON in full (as carried by the `vp` header — Tempo `vera.wrapper`, complete after raising the OTLP attribute cap):
-
-        ```json
-        {
-          \"@context\": [
-            \"https://www.w3.org/2018/credentials/v1\",
-            \"https://bboi.solidcommunity.net/public/schemas/2024/wrappedvp.jsonld\"
+          "type": [
+            "VerifiablePresentationRequest"
           ],
-          \"id\": \"https://example.com/wrappedVP/321122\",
-          \"type\": [\"VerifiablePresentation\"],
-          \"wrappedVP\": {
-            \"@context\": [\"https://www.w3.org/2018/credentials/v1\", \"https://identity.foundation/presentation-exchange/submission/v1\", \"https://bboi.solidcommunity.net/public/schemas/2024/protocol.jsonld\"],
-            \"requestACP\": {
-              \"type\": [\"ACPContext\"],
-              \"target\": \"http://localhost:3002/my-pod/test-folder/dual-mode-resource.txt\",
-              \"owner\": \"did:web:raw.githubusercontent.com:biagioboi:CommunitySolidServer:main\",
-              \"issuer\": \"did:web:secureissuer.solidcommunity.net:public\",
-              \"client\": \"did:web:privateclinic.solidcommunity.net:public\",
-              \"agent\": \"did:web:bboi.solidcommunity.net:public\"
-            },
-            \"type\": [\"VerifiablePresentation\", \"PresentationSubmission\"],
-            \"holder\": \"did:web:bboi.solidcommunity.net:public\",
-            \"presentation_submission\": {
-              \"id\": \"1u3rmU5rMNiryU5CcQCGJ\",
-              \"definition_id\": \"32f54163-7166-48f1-93d8-ff217bdb0653\",
-              \"descriptor_map\": [{ \"id\": \"unisa_student\", \"format\": \"ldp_vc\", \"path\": \"$.verifiableCredential[0]\" }]
-            },
-            \"verifiableCredential\": [
+          "presentation_definition": {
+            "id": "32f54163-7166-48f1-93d8-ff217bdb0653",
+            "input_descriptors": [
               {
-                \"@context\": [\"https://www.w3.org/2018/credentials/v1\", \"https://www.w3.org/2018/credentials/examples/v1\"],
-                \"id\": \"https://example.com/credentials/321122\",
-                \"type\": [\"VerifiableCredential\", \"ExampleDegreeCredential\"],
-                \"issuer\": \"did:web:secureissuer.solidcommunity.net:public\",
-                \"issuanceDate\": \"2010-01-01T19:23:24Z\",
-                \"credentialSubject\": { \"id\": \"did:web:bboi.solidcommunity.net:public\", \"degree\": { \"type\": \"ExampleBachelorDegree\", \"name\": \"Engineering\" } },
-                \"proof\": {
-                  \"verificationMethod\": \"did:web:secureissuer.solidcommunity.net:public#z6Mkp2Ph528qMXQXmhHVbaDbMrL15R6qiQ1gGvD19C8meUar\",
-                  \"type\": \"Ed25519Signature2018\",
-                  \"created\": \"2026-10-07T03:44:06Z\",
-                  \"proofPurpose\": \"assertionMethod\",
-                  \"jws\": \"eyJhbGciOiJFZERTQSIsImI2NCI6ZmFsc2UsImNyaXQiOlsiYjY0Il19..KWljYij9-hhtNDLDOQeOoLzMRYm5XOZCKgn5-SRo7Son2F7qzsuZYhyPfuoMUqPWvnUI_SZKP9KV26HFahdPAA\"
+                "id": "unisa_student",
+                "name": "University of Salerno Demo",
+                "purpose": "Demonstrate to be a student from the University of…this POD",
+                "constraints": {
+                  "fields": [
+                    {
+                      "path": [
+                        "$.credentialSubject.degree",
+                        "$.credentialSubject.claims.degree"
+                      ]
+                    }
+                  ]
                 }
               }
             ],
-            \"proof\": {
-              \"verificationMethod\": \"did:web:bboi.solidcommunity.net:public#z6MksJS85b7ugR3Mr5FVfGMeL4HB25uvEjrn8zXYzptUrzTb\",
-              \"type\": \"Ed25519Signature2018\",
-              \"created\": \"2026-10-07T03:44:42Z\",
-              \"proofPurpose\": \"authentication\",
-              \"challenge\": \"6Bb2xU/VYRLkquAaDTZR7g==\",
-              \"domain\": \"https://bboi.solidcommunity.net/definition/ourProtocol#test\",
-              \"jws\": \"eyJhbGciOiJFZERTQSIsImI2NCI6ZmFsc2UsImNyaXQiOlsiYjY0Il19..4nzg_sUUf4ytJs3XeHSOf_8Vm2t8aoVVrOgG5xUEE4EwY-ahzYytBxWnivVaPLhlNgj8DXFZ00cWcb_M8ASiBA\"
+            "format": {
+              "ldp_vc": {
+                "proof_type": [
+                  "JsonWebSignature2020",
+                  "Ed25519Signature2018",
+                  "EcdsaSecp256k1Signature2019",
+                  "RsaSignature2018"
+                ]
+              },
+              "ldp_vp": {
+                "proof_type": [
+                  "Ed25519Signature2018"
+                ]
+              },
+              "ldp": {
+                "proof_type": [
+                  "RsaSignature2018"
+                ]
+              }
+            },
+            "requestACP": {
+              "type": [
+                "ACPContext"
+              ],
+              "target": "http://localhost:3002/my-pod/test-folder/dual-mode-resource.txt",
+              "owner": "did:web:raw.githubusercontent.com:biagioboi:Commun…ver:main",
+              "issuer": "did:web:secureissuer.solidcommunity.net:public",
+              "client": "did:web:privateclinic.solidcommunity.net:public",
+              "agent": "did:web:bboi.solidcommunity.net:public"
             }
+          },
+          "options": {
+            "challenge": "DIsAJP6aajfSMyGQCsWPjQ==",
+            "domain": "https://bboi.solidcommunity.net/definition/ourProtocol#test"
           }
         }
         ```
 
-        Captured DIDComm wire message (wallet `didcomm.pack`, direction=out, encrypted — `presentations~attach` shortened):
-
-        ```json
-        {
-          \"@type\": \"https://didcomm.org/present-proof/2.0/presentation\",
-          \"last_presentation\": true,
-          \"formats\": [{ \"attach_id\": \"<uuid>\", \"format\": \"dif/presentation-exchange/submission@v1.0\" }],
-          \"presentations~attach\": [{ \"…\": \"the wrapped VP above\" }]
-        }
-        ```
-
-        The app verifies and wraps what it received, then acks — observed span chain:
-        `vc.verifyPresentation` → `vc.wrapPresentation` (`vera.presentation`, `vera.wrapper`)
-        → `vc.signWrappedPresentation` (`vera.signed`), then the app replies with a
-        `didcomm.pack` of `present-proof/2.0/ack` (direction=out, encrypted) that the wallet
-        `didcomm.unpack`s (direction=in).
-
-        > [!TIP]
-        > In the demo UI this is the wallet's *Proof Request → **Share Credential*** step.
+        Body: `UnauthorizedHttpError`, status 401.
         """
     }
 
-    app -> css "GET resource (header: vp = [JSON VP])" {
-      technology "HTTPS"
+    app -> user "m5 · present-proof/2.0 request-presentation" {
+      technology "DIDComm"
       notes """
-        CSS-side verification (`VpChecker`):
+        **Phase 3 — proof** (trace `28e7f75c…`, `POST /requestUserCredential` on the app). The app wraps the
+        VPR (`vc.wrapPresentationRequest`: VPR plus `termsAndCondition`) and signs the wrapper
+        (`vc.signWrappedPresentationRequest`), then forwards it to the wallet as a DIF presentation-exchange
+        definition.
 
-        * `validNonceAndDomain(vp)` — challenge + domain match
-        * `VpChecker.verifyNew(vp)` → **Credentials[agent, issuer, client]**
-        * `AcpReader` matcher on agent/issuer/client → `acl:Read` and/or `acl:NRRead`
-        * `PermissionBasedAuthorizer` — mode granted
-
-        > [!NOTE]
-        > At this point the app is authorized *for the Verifier* and the user *for the Verifier*.
-
-        Captured wire header (live run):
-
-        ```
-        vp: {\"@context\":[\"https://www.w3.org/2018/credentials/v1\",\"https://bboi.solidcommunity.net/public/schemas/2024/wrappedvp.jsonld\"],\"id\":\"https://example.com/wrappedVP/321122\",\"type\":[\"VerifiablePresentation\"],\"wrappedVP\":{\"@context\":[…],\"…\":\"…\"}}
-        ```
-
-        Captured `Credentials` object (`css.VpChecker.verifyNew` → `vera.credentials`):
+        Plaintext (`didcomm.pack` on demo-app-1):
 
         ```json
         {
-          \"agent\": \"did:web:bboi.solidcommunity.net:public\",
-          \"client\": \"did:web:privateclinic.solidcommunity.net:public\",
-          \"issuer\": \"did:web:secureissuer.solidcommunity.net:public\"
+          "@type": "https://didcomm.org/present-proof/2.0/request-presentation",
+          "will_confirm": true,
+          "present_multiple": false,
+          "formats": [
+            {
+              "attach_id": "575ab205-86be-4ba8-939d-3b0d2621fb46",
+              "format": "dif/presentation-exchange/definitions@v1.0"
+            }
+          ],
+          "request_presentations~attach": [
+            {
+              "@id": "575ab205-86be-4ba8-939d-3b0d2621fb46",
+              "mime-type": "application/json",
+              "data": {
+                "json": {
+                  "@context": [
+                    "https://bboi.solidcommunity.net/public/schemas/202…r.jsonld"
+                  ],
+                  "id": "https://example.com/wrappedVPR/321122",
+                  "type": [
+                    "VerifiablePresentationRequestWrapper"
+                  ],
+                  "wrappedVPR": {
+                    "@context": [
+                      "https://bboi.solidcommunity.net/public/schemas/202…e.jsonld"
+                    ],
+                    "type": [
+                      "VerifiablePresentationRequest"
+                    ],
+                    "presentation_definition": {
+                      "id": "32f54163-7166-48f1-93d8-ff217bdb0653",
+                      "input_descriptors": [
+                        {
+                          "id": "unisa_student",
+                          "name": "University of Salerno Demo",
+                          "purpose": "Demonstrate to be a student from the University of…this POD",
+                          "constraints": {
+                            "fields": [
+                              {
+                                "path": [
+                                  "$.credentialSubject.degree",
+                                  "$.credentialSubject.claims.degree"
+                                ]
+                              }
+                            ]
+                          }
+                        }
+                      ],
+                      "format": {
+                        "ldp_vc": {
+                          "proof_type": [
+                            "JsonWebSignature2020",
+                            "Ed25519Signature2018",
+                            "EcdsaSecp256k1Signature2019",
+                            "RsaSignature2018"
+                          ]
+                        },
+                        "ldp_vp": {
+                          "proof_type": [
+                            "Ed25519Signature2018"
+                          ]
+                        },
+                        "ldp": {
+                          "proof_type": [
+                            "RsaSignature2018"
+                          ]
+                        }
+                      },
+                      "requestACP": {
+                        "type": [
+                          "ACPContext"
+                        ],
+                        "target": "http://localhost:3002/my-pod/test-folder/dual-mode-resource.txt",
+                        "owner": "did:web:raw.githubusercontent.com:biagioboi:Commun…ver:main",
+                        "issuer": "did:web:secureissuer.solidcommunity.net:public",
+                        "client": "did:web:privateclinic.solidcommunity.net:public",
+                        "agent": "did:web:bboi.solidcommunity.net:public"
+                      }
+                    },
+                    "options": {
+                      "challenge": "DIsAJP6aajfSMyGQCsWPjQ==",
+                      "domain": "https://bboi.solidcommunity.net/definition/ourProtocol#test"
+                    }
+                  },
+                  "termsAndCondition": {
+                    "type": [
+                      "ACPContext"
+                    ],
+                    "target": "http://localhost:3002/my-pod/test-folder/dual-mode-resource.txt",
+                    "owner": "did:web:raw.githubusercontent.com:biagioboi:Commun…ver:main",
+                    "issuer": "did:web:secureissuer.solidcommunity.net:public",
+                    "client": "did:web:privateclinic.solidcommunity.net:public",
+                    "agent": "did:web:bboi.solidcommunity.net:public"
+                  },
+                  "proof": [
+                    null,
+                    {
+                      "verificationMethod": "did:web:privateclinic.solidcommunity.net:public#z6…sKuUGG6R",
+                      "type": "Ed25519Signature2018",
+                      "created": "2026-11-23T17:59:35Z",
+                      "proofPurpose": "assertionMethod",
+                      "jws": "eyJhbGciOiJFZERTQSIsImI2NCI6ZmFsc2UsImNyaXQiOlsiYj…DiTMR3AA"
+                    }
+                  ]
+                }
+              }
+            }
+          ],
+          "@id": "52d5d93b-de06-4d1f-9655-1cb1bd9c0bf2",
+          "~thread": {
+            "thid": "a43397c4-cb50-4389-ad7a-41b7444977cf"
+          }
+        }
+        ```
+        """
+    }
+
+    user -> app "m6 · present-proof/2.0 presentation" {
+      technology "DIDComm"
+      notes """
+        Trace `9a67fc35…`. The user approves in the wallet; the VP contains the ExampleDegreeCredential
+        and is signed by the user (`authentication`) over the same `challenge` and `domain`.
+        The app checks it with `vc.verifyPresentation`.
+
+        Plaintext (`didcomm.pack` on demo-user):
+
+        ```json
+        {
+          "@type": "https://didcomm.org/present-proof/2.0/presentation",
+          "last_presentation": true,
+          "formats": [
+            {
+              "attach_id": "e162d100-4ad4-4f19-bcef-410ab9fbdc5e",
+              "format": "dif/presentation-exchange/submission@v1.0"
+            }
+          ],
+          "presentations~attach": [
+            {
+              "@id": "e162d100-4ad4-4f19-bcef-410ab9fbdc5e",
+              "mime-type": "application/json",
+              "data": {
+                "json": {
+                  "@context": [
+                    "https://www.w3.org/2018/credentials/v1",
+                    "https://identity.foundation/presentation-exchange/submission/v1",
+                    "https://bboi.solidcommunity.net/public/schemas/202…l.jsonld"
+                  ],
+                  "requestACP": {
+                    "type": [
+                      "ACPContext"
+                    ],
+                    "target": "http://localhost:3002/my-pod/test-folder/dual-mode-resource.txt",
+                    "owner": "did:web:raw.githubusercontent.com:biagioboi:Commun…ver:main",
+                    "issuer": "did:web:secureissuer.solidcommunity.net:public",
+                    "client": "did:web:privateclinic.solidcommunity.net:public",
+                    "agent": "did:web:bboi.solidcommunity.net:public"
+                  },
+                  "type": [
+                    "VerifiablePresentation",
+                    "PresentationSubmission"
+                  ],
+                  "holder": "did:web:bboi.solidcommunity.net:public",
+                  "presentation_submission": {
+                    "id": "Tw6FBJ68EhAOlp0CMH6Eq",
+                    "definition_id": "32f54163-7166-48f1-93d8-ff217bdb0653",
+                    "descriptor_map": [
+                      {
+                        "id": "unisa_student",
+                        "format": "ldp_vc",
+                        "path": "$.verifiableCredential[0]"
+                      }
+                    ]
+                  },
+                  "verifiableCredential": [
+                    {
+                      "@context": [
+                        "https://www.w3.org/2018/credentials/v1",
+                        "https://www.w3.org/2018/credentials/examples/v1"
+                      ],
+                      "id": "https://example.com/credentials/321122",
+                      "type": [
+                        "VerifiableCredential",
+                        "ExampleDegreeCredential"
+                      ],
+                      "issuer": "did:web:secureissuer.solidcommunity.net:public",
+                      "issuanceDate": "2010-01-01T19:23:24Z",
+                      "credentialSubject": {
+                        "degree": {
+                          "type": "ExampleBachelorDegree",
+                          "name": "Engineering"
+                        },
+                        "id": "did:web:bboi.solidcommunity.net:public"
+                      },
+                      "proof": {
+                        "verificationMethod": "did:web:secureissuer.solidcommunity.net:public#z6M…9C8meUar",
+                        "type": "Ed25519Signature2018",
+                        "created": "2026-11-23T17:59:00Z",
+                        "proofPurpose": "assertionMethod",
+                        "jws": "eyJhbGciOiJFZERTQSIsImI2NCI6ZmFsc2UsImNyaXQiOlsiYj…YfE_uBAw"
+                      }
+                    }
+                  ],
+                  "proof": {
+                    "verificationMethod": "did:web:bboi.solidcommunity.net:public#z6MksJS85b7…zptUrzTb",
+                    "type": "Ed25519Signature2018",
+                    "created": "2026-11-23T17:59:42Z",
+                    "proofPurpose": "authentication",
+                    "challenge": "DIsAJP6aajfSMyGQCsWPjQ==",
+                    "domain": "https://bboi.solidcommunity.net/definition/ourProtocol#test",
+                    "jws": "eyJhbGciOiJFZERTQSIsImI2NCI6ZmFsc2UsImNyaXQiOlsiYj…I17JCqCw"
+                  }
+                }
+              }
+            }
+          ],
+          "@id": "d3a2c573-6e08-497b-8f02-0cee118198cc",
+          "~thread": {
+            "thid": "a43397c4-cb50-4389-ad7a-41b7444977cf"
+          },
+          "~please_ack": {
+            "on": [
+              "RECEIPT"
+            ]
+          }
+        }
+        ```
+        """
+    }
+
+    app -> user "present-proof/2.0 ack" {
+      technology "DIDComm"
+      notes """
+        Not in the ProVerif model: DIDComm acknowledgement requested by `~please_ack` in m6.
+
+        Plaintext:
+
+        ```json
+        {
+          "@type": "https://didcomm.org/present-proof/2.0/ack",
+          "@id": "a0f90738-a77f-49a6-a1f2-eae22d1f3de9",
+          "status": "OK",
+          "~thread": {
+            "thid": "a43397c4-cb50-4389-ad7a-41b7444977cf"
+          }
+        }
+        ```
+        """
+    }
+
+    app -> css "m7 · GET resource (vp)" {
+      technology "HTTPS"
+      notes """
+        **Phase 4 — presentation to the CSS** (trace `6ed104ef…`). In the model m7 = (m6, sig(hash(m6), sk_a)):
+        the app wraps the user's VP (`vc.wrapPresentation`) and signs it (`vc.signWrappedPresentation`),
+        sending it in the `vp` header. The CSS runs `css.VpChecker.verifyNew` →
+        `vc.verifyWrappedPresentation` (app signature) → `vc.verifyPresentation` (user signature and VC).
+
+        `vp` header — wrapped VP (outer proof by the app, inner proof by the user):
+
+        ```json
+        {
+          "@context": [
+            "https://www.w3.org/2018/credentials/v1",
+            "https://bboi.solidcommunity.net/public/schemas/202…p.jsonld"
+          ],
+          "id": "https://example.com/wrappedVP/321122",
+          "type": [
+            "VerifiablePresentation"
+          ],
+          "wrappedVP": {
+            "@context": [
+              "https://www.w3.org/2018/credentials/v1",
+              "https://identity.foundation/presentation-exchange/submission/v1",
+              "https://bboi.solidcommunity.net/public/schemas/202…l.jsonld"
+            ],
+            "requestACP": {
+              "type": [
+                "ACPContext"
+              ],
+              "target": "http://localhost:3002/my-pod/test-folder/dual-mode-resource.txt",
+              "owner": "did:web:raw.githubusercontent.com:biagioboi:Commun…ver:main",
+              "issuer": "did:web:secureissuer.solidcommunity.net:public",
+              "client": "did:web:privateclinic.solidcommunity.net:public",
+              "agent": "did:web:bboi.solidcommunity.net:public"
+            },
+            "type": [
+              "VerifiablePresentation",
+              "PresentationSubmission"
+            ],
+            "holder": "did:web:bboi.solidcommunity.net:public",
+            "presentation_submission": {
+              "id": "Tw6FBJ68EhAOlp0CMH6Eq",
+              "definition_id": "32f54163-7166-48f1-93d8-ff217bdb0653",
+              "descriptor_map": [
+                {
+                  "id": "unisa_student",
+                  "format": "ldp_vc",
+                  "path": "$.verifiableCredential[0]"
+                }
+              ]
+            },
+            "verifiableCredential": [
+              {
+                "@context": [
+                  "https://www.w3.org/2018/credentials/v1",
+                  "https://www.w3.org/2018/credentials/examples/v1"
+                ],
+                "id": "https://example.com/credentials/321122",
+                "type": [
+                  "VerifiableCredential",
+                  "ExampleDegreeCredential"
+                ],
+                "issuer": "did:web:secureissuer.solidcommunity.net:public",
+                "issuanceDate": "2010-01-01T19:23:24Z",
+                "credentialSubject": {
+                  "degree": {
+                    "type": "ExampleBachelorDegree",
+                    "name": "Engineering"
+                  },
+                  "id": "did:web:bboi.solidcommunity.net:public"
+                },
+                "proof": {
+                  "verificationMethod": "did:web:secureissuer.solidcommunity.net:public#z6M…9C8meUar",
+                  "type": "Ed25519Signature2018",
+                  "created": "2026-11-23T17:59:00Z",
+                  "proofPurpose": "assertionMethod",
+                  "jws": "eyJhbGciOiJFZERTQSIsImI2NCI6ZmFsc2UsImNyaXQiOlsiYj…YfE_uBAw"
+                }
+              }
+            ],
+            "proof": {
+              "verificationMethod": "did:web:bboi.solidcommunity.net:public#z6MksJS85b7…zptUrzTb",
+              "type": "Ed25519Signature2018",
+              "created": "2026-11-23T17:59:42Z",
+              "proofPurpose": "authentication",
+              "challenge": "DIsAJP6aajfSMyGQCsWPjQ==",
+              "domain": "https://bboi.solidcommunity.net/definition/ourProtocol#test",
+              "jws": "eyJhbGciOiJFZERTQSIsImI2NCI6ZmFsc2UsImNyaXQiOlsiYj…I17JCqCw"
+            }
+          },
+          "proof": {
+            "verificationMethod": "did:web:privateclinic.solidcommunity.net:public#z6…sKuUGG6R",
+            "type": "Ed25519Signature2018",
+            "created": "2026-11-23T17:59:43Z",
+            "proofPurpose": "authentication",
+            "challenge": "DIsAJP6aajfSMyGQCsWPjQ==",
+            "domain": "https://bboi.solidcommunity.net/definition/ourProtocol#test",
+            "jws": "eyJhbGciOiJFZERTQSIsImI2NCI6ZmFsc2UsImNyaXQiOlsiYj…eHz4PXDA"
+          }
         }
         ```
         """
     }
 
     alt "access decision" {
-      when "3a — only acl:Read granted" {
+      when "3a — only acl:Read granted (trusted hospital)" {
         css -> app "200 OK + plaintext resource" {
           technology "HTTPS"
           notes """
-            Short path — no encryption, no receipts, no audit records.
+            **Third run — demo-app-2 (Public Hospital)**, client `did:web:publichospital.solidcommunity.net:public`
+            (traces `c79a3b2a…`, `70fd58cd…`, `7f44656d…`, `170830e9…`, `b31760ef…`, `25118f7e…`).
+            m1–m7 are the same as above. The client only holds `acl:Read`, so after the VP checks the CSS
+            returns the resource in clear — no K_ttp, no NRO, no receipts (`nro-audit/query` stays empty).
 
-            Delivered body (captured `http.response.body` on the CSS server span):
+            Response body:
 
             ```text
-            This resource has two access modes depending on who asks: privateclinic gets it only
-            via non-repudiable read (acl:NRRead), publichospital gets it via plain acl:Read/acl:Write.
-            ```
+            This resource has two access modes depending on who asks: secureapp gets it only
+            via non-repudiable read (acl:NRRead), secureapp-2 gets it via plain acl:Read.
 
-            > [!TIP]
-            > **demo-app-2 (Public Hospital)** exercises this branch on
-            > `dual-mode-resource.txt` (plain read, no NRO graphs).
+            ```
             """
         }
       }
       else "3b — only acl:NRRead granted" {
-        opt "only on the first NRRead (\"TTP key refresh\" is a protocol option, not implemented in this demo)" {
-          css -> ttp "didexchange/1.1 request" {
-            technology "DIDComm"
-            description "The CSS accepts the TTP's out-of-band invitation and proposes its peer DID."
+        opt "K_ttp setup — first NRRead only" {
+          css -> ttp "m10 · POST /keyExchange" {
+            technology "HTTPS"
             notes """
-            > [!NOTE]
-            > Opened on first use and **reused**: `ensureTtpConnection()` keeps the connection id in
-            > memory, so this handshake runs again only after a CSS restart or if the stored
-            > connection is no longer found.
+              Setup of **K_ttp** (m10/m11 in the model), done once per CSS process (`ensureTtpKey`); later
+              NRReads reuse the key — in the TTP run (`714252ce…`) this exchange is absent.
+              The CSS sends an ephemeral X25519 public key signed with its `did:web` key
+              (payload tag `VERA-KEX-CSS`).
 
-            `~thread.pthid` is the id of the out-of-band invitation the CSS fetched from the TTP
-            (`GET /generateInvitation`). `did_doc~attach` carries the CSS **peer DID** document
-            (service endpoint `http://solid-css:3015`), signed with the CSS did:web key
-            (`kid` = `did:key:z6Mkf9bx…kt3A`).
+              Request body:
 
-            Tempo: `didcomm.pack` on `solid-css` (direction=out, encrypted, recipients=1) and
-            `didcomm.unpack` on `demo-ttp` (direction=in), same `@id`.
-
-            Captured `didcomm.payload`:
-
-            ```json
-            {
-              \"@type\": \"https://didcomm.org/didexchange/1.1/request\",
-              \"@id\": \"2fc59d92-9cd2-4be8-8746-9db79806bdf2\",
-              \"label\": \"SecureSolidApplication\",
-              \"did\": \"did:peer:1zQmQEGg4u5AZjHaXxbzgQrzezHFruZzegvXMm8sB93oM35r\",
-              \"didlong\": \"did:web:raw.githubusercontent.com:biagioboi:CommunitySolidServer:main\",
-              \"~thread\": {
-                \"pthid\": \"9ff8cc39-a582-4c1c-8488-ca160a63e6f4\"
-              },
-              \"did_doc~attach\": {
-                \"@id\": \"d92c2a0d-98e6-4efd-af2e-80e5559f0c5e\",
-                \"mime-type\": \"application/json\",
-                \"data\": {
-                  \"base64\": \"eyJAY29udGV4dCI6WyJodHRwczovL3czaWQub3JnL2RpZC92MSJdLCJpZCI6ImRpZDpwZWVyOjF6UW1RRUdnNHU1QVpqSGFYeGJ6Z1FyemV6SEZydVp6ZWd2WE1tOHNCOTNvTTM1ciIsInNlcnZpY2UiOlt7ImlkIjoiI2lubGluZS0wIiwic2VydmljZUVuZHBvaW50IjoiaHR0cDovL3NvbGlkLWNzczozMDE1IiwidHlwZSI6ImRpZC1jb21tdW5pY2F0aW9uIiwicHJpb3JpdHkiOjAsInJlY2lwaWVudEtleXMiOlsiI2tleS0xIl0sInJvdXRpbmdLZXlzIjpbXX1dLCJhdXRoZW50aWNhdGlvbiI6W3siaWQiOiIja2V5LTEiLCJ0eXBlIjoiRWQyNTUxOVZlcmlmaWNhdGlvbktleTIwMTgiLCJjb250cm9sbGVyIjoiI2lkIiwicHVibGljS2V5QmFzZTU4IjoiSDM2aDExeDdYUDNaVXhKTlRzekxONGE1WUtqZHRSRWg0WFZYZ0hGa1dCaFgifV0sImtleUFncmVlbWVudCI6W3siaWQiOiIja2V5LTIiLCJ0eXBlIjoiWDI1NTE5S2V5QWdyZWVtZW50S2V5MjAxOSIsImNvbnRyb2xsZXIiOiIjaWQiLCJwdWJsaWNLZXlCYXNlNTgiOiIzNk1RU004aDlhQ1I1NlBEZ01QZW4zRHNoUDZ0dmFNYmJ0OEZSQU1NSzNkYSJ9XX0=\",
-                  \"jws\": {
-                    \"protected\": \"eyJhbGciOiJFZERTQSIsImp3ayI6eyJrdHkiOiJPS1AiLCJjcnYiOiJFZDI1NTE5IiwieCI6IkNsWEJQeVpyTTNEWXlBUzFpYXBuS0ZaYlJXOUw5X3pEYk1Lb29IdlJxWEUifX0\",
-                    \"signature\": \"cRui4bHwORFH2FGTgQkw5INUoxu0G9A37t_W8c9AHlqTHVnydDfcm9onkEnwh2x7pPMvmZLhRnCE3dyNQdM3Bw\",
-                    \"header\": {
-                      \"kid\": \"did:key:z6Mkf9bxtpvqPMimswSwNb9wz7TewzB4TZAaybpS8Gkpkt3A\"
-                    }
-                  }
-                }
+              ```json
+              {
+                "did": "did:web:raw.githubusercontent.com:biagioboi:Commun…ver:main",
+                "publicKey": "MKr0NbWEr5KaVR3dsAbaYWn0_79qEU4b97x5pV3VcQA",
+                "signature": "0CI3gZY8ETRNEsxNixAUMAVWfS3F5jBvzwRMH17aUDlu59Lisz…QX2GpcCA"
               }
-            }
-            ```
-            """
+              ```
+              """
           }
-          ttp -> css "didexchange/1.1 response" {
-            technology "DIDComm"
-            description "The TTP answers with its own peer DID for this channel."
+
+          ttp -> css "m11 · TTP ephemeral key + signature" {
+            technology "HTTPS"
             notes """
-            `~thread.thid` is the `@id` of the request. `did_doc~attach` carries the TTP **peer DID**
-            document (service endpoint `http://demo-ttp:3070`, Ed25519 `#key-1` as recipient key,
-            X25519 `#key-2` for key agreement), signed with the TTP did:web key
-            (`kid` = `did:key:z6Mku4Cj…D243`, the key published in `demo-ttp/config/did.json`).
+              The TTP answers with its own ephemeral key, signed over both public keys (tag `VERA-KEX-TTP`).
+              Both sides derive K_ttp = HKDF(X25519(own, peer)); `kid` identifies it and prefixes every Y.
 
-            > [!IMPORTANT]
-            > This peer DID is what `getTtpRecipientKeys()` resolves later
-            > (`connectionRecord.theirDid`): the fresh symKey is encrypted for these recipient keys.
+              Response body:
 
-            Tempo: `didcomm.pack` on `demo-ttp` (direction=out, encrypted, recipients=1) and
-            `didcomm.unpack` on `solid-css` (direction=in), same `@id`.
-
-            Captured `didcomm.payload`:
-
-            ```json
-            {
-              \"@type\": \"https://didcomm.org/didexchange/1.1/response\",
-              \"@id\": \"9ebfb8c0-8506-437b-9776-106715d8ab61\",
-              \"did\": \"did:peer:1zQmUiTxizdVJcGSCdskKBhVsTcZF1TcuaXdAFaA1cX4MRXe\",
-              \"~thread\": {
-                \"thid\": \"2fc59d92-9cd2-4be8-8746-9db79806bdf2\"
-              },
-              \"did_doc~attach\": {
-                \"@id\": \"9bd7ee56-352d-46ea-a84a-acddea1ddee2\",
-                \"mime-type\": \"application/json\",
-                \"data\": {
-                  \"base64\": \"eyJAY29udGV4dCI6WyJodHRwczovL3czaWQub3JnL2RpZC92MSJdLCJpZCI6ImRpZDpwZWVyOjF6UW1VaVR4aXpkVkpjR1NDZHNrS0JoVnNUY1pGMVRjdWFYZEFGYUExY1g0TVJYZSIsInNlcnZpY2UiOlt7ImlkIjoiI2lubGluZS0wIiwic2VydmljZUVuZHBvaW50IjoiaHR0cDovL2RlbW8tdHRwOjMwNzAiLCJ0eXBlIjoiZGlkLWNvbW11bmljYXRpb24iLCJwcmlvcml0eSI6MCwicmVjaXBpZW50S2V5cyI6WyIja2V5LTEiXSwicm91dGluZ0tleXMiOltdfV0sImF1dGhlbnRpY2F0aW9uIjpbeyJpZCI6IiNrZXktMSIsInR5cGUiOiJFZDI1NTE5VmVyaWZpY2F0aW9uS2V5MjAxOCIsImNvbnRyb2xsZXIiOiIjaWQiLCJwdWJsaWNLZXlCYXNlNTgiOiJCTXg0RXR1d0duZGJ2cGtHNEIzUFVhUHYzYjNMSjNkVGlITGJ1b1JYRWR1eCJ9XSwia2V5QWdyZWVtZW50IjpbeyJpZCI6IiNrZXktMiIsInR5cGUiOiJYMjU1MTlLZXlBZ3JlZW1lbnRLZXkyMDE5IiwiY29udHJvbGxlciI6IiNpZCIsInB1YmxpY0tleUJhc2U1OCI6IkRFTnRoZHRwa0pjemZLN3Q0Y1BFV0Zqc2lWQUhlclpNUVlpdHJuYnh5YjZKIn1dfQ==\",
-                  \"jws\": {
-                    \"protected\": \"eyJhbGciOiJFZERTQSIsImp3ayI6eyJrdHkiOiJPS1AiLCJjcnYiOiJFZDI1NTE5IiwieCI6IjJQYzF2MU5xYmg4Y1Z1eXpTSEZFYnkyMF9mSllpUlh0dkMxWjJhSFh6MVEifX0\",
-                    \"signature\": \"xnGaqLgXxJqqNTVEcLb9xOMMsFaS0qvW_G-vTpZ6tn_pQP0kw-UsvGEeUlyPIa0ws_RyqERekycUyREbnRr3DA\",
-                    \"header\": {
-                      \"kid\": \"did:key:z6Mku4Cjz6zvNSxhLjM3hjAnPrh5N59HLBsjyuxvmLAMD243\"
-                    }
-                  }
-                }
+              ```json
+              {
+                "did": "did:web:raw.githubusercontent.com:biagioboi:DKGNon…p:config",
+                "publicKey": "9wFdPEDFqqqyYw2cykevo85oy3P6ZCp02QOj3QPUK0k",
+                "signature": "xqh1fr6T2vr_K9XM3hCLbQN36W6bhSF-QIYZaCWS6IVQKy5aQc…EsI-5rBw",
+                "kid": "395bb593e938de9c19cf6338473a1b60"
               }
-            }
-            ```
-            """
-          }
-          css -> ttp "didexchange/1.1 complete" {
-            technology "DIDComm"
-            description "The CSS confirms; the reserved escrow channel is ready."
-            notes """
-            Closes the thread opened by the request (`thid`) under the same invitation (`pthid`).
-            After this message both sides hold a ready connection and the CSS stores its id as
-            `ttpConnectionId`.
-
-            Tempo: `didcomm.pack` on `solid-css` (direction=out, encrypted, recipients=1) and
-            `didcomm.unpack` on `demo-ttp` (direction=in), same `@id`.
-
-            Captured `didcomm.payload`:
-
-            ```json
-            {
-              \"@type\": \"https://didcomm.org/didexchange/1.1/complete\",
-              \"@id\": \"889071f5-bd7e-4ad2-8fa6-18217d40cb9e\",
-              \"~thread\": {
-                \"thid\": \"2fc59d92-9cd2-4be8-8746-9db79806bdf2\",
-                \"pthid\": \"9ff8cc39-a582-4c1c-8488-ca160a63e6f4\"
-              },
-              \"~transport\": {
-                \"return_route\": \"none\"
-              }
-            }
-            ```
-            """
+              ```
+              """
           }
         }
-        css -> app "encryptedresource: JWE + hash + NRO material" {
+
+        css -> app "m12 · 200 encryptedresource (E, Y, h, h_K, NRO)" {
           technology "HTTPS"
           notes """
-            `buildNonRepudiableRelease()` + `attachNonRepudiationMaterial()`:
+            m12 = (resenc, k15enc, h, h_K, nro) in the model. The CSS generates a fresh resource key K_R and:
 
-            1. fetch the resource content
-            2. encrypt it with a **fresh symKey** → DIDComm JWE (`encrypted_key` targets the TTP)
-            3. `messageHash = sha256(resource content)` — captured live:
-               `f970288ecdc17639e1d606a14dbb451d5a335eb244c4e5de6851165b011a66a1`, which is
-               exactly `sha256(plaintext resource)` (verified offline against the resource body)
-            4. keep symKey + pending context server-side (hash → connectionId / requesterDid / requestedResource)
-            5. attach the NRO material:
-               * `hash` — plain message hash
-               * `hashCredential` — **NonRepudiableOrigin** VC (CSS-signed, subject=requesterDid, signedHash)
-               * `signatureFromCSS` — JWS over the message hash
+            - **E** = AEAD_K_R(R, salt) — the encrypted resource
+            - **Y** = kid . AEAD_K_ttp(K_R, DID_A, n_c, H(E)) — K_R in escrow for the TTP
+            - **h** = H(R, salt), **h_K** = H(K_R)
+            - **C** = H(DID_V, DID_A, DID_U, URI, n_c, H(E), Y, h, h_K) — the commitment
+            - **NRO** = CSS signature on C (`vc.issue`, `NonRepudiableOrigin`, `signedHash` = C)
 
-            Captured `encryptedresource` envelope (complete — fresh-run values; `ciphertext` and the `hashCredential` proof omitted for brevity):
+            `encryptedresource` header:
 
             ```json
             {
-              \"protected\": {
-                \"enc\": \"xchacha20poly1305_ietf\",
-                \"typ\": \"JWM/1.0\",
-                \"alg\": \"Anoncrypt\",
-                \"recipients\": [{ \"encrypted_key\": \"mek1e-FPXcLc-y3EODLW4lKbMnCpVPmLuumMjJqMgXGOmvpsp0pZUWqI10WtFys6UZCl2ozyV3UIWSksITdN82pwYsr0LBnJUuz9aGuCyHg\", \"header\": { \"kid\": \"4G8Kbd6akNj3NPjniahnDWMmMjVVMits62Qcm1VcDDoD\" } }]
-              },
-              \"ciphertext\": \"…\",
-              \"iv\": \"bCoPNB9s9g7jzPOI\",
-              \"tag\": \"EqFUqOxNbuam8duSyVBCrw\",
-              \"hash\": \"f970288ecdc17639e1d606a14dbb451d5a335eb244c4e5de6851165b011a66a1\",
-              \"hashCredential\": { \"@context\": [\"https://www.w3.org/2018/credentials/v1\", \"https://privateclinic.solidcommunity.net/public/NonRepudiationContext.jsonld\"], \"id\": \"https://example.com/credentials/1872\", \"type\": [\"VerifiableCredential\", \"NonRepudiableOrigin\"], \"issuer\": \"did:web:raw.githubusercontent.com:biagioboi:CommunitySolidServer:main\", \"credentialSubject\": { \"id\": \"did:web:bboi.solidcommunity.net:public\" }, \"signedHash\": \"f970288ecdc17639e1d606a14dbb451d5a335eb244c4e5de6851165b011a66a1\", \"proof\": { \"type\": \"Ed25519Signature2018\", \"proofPurpose\": \"assertionMethod\", \"jws\": \"eyJhbGciOiJFZERTQS…\" } },
-              \"signatureFromCSS\": {
-                \"protected\": \"eyJhbGciOiJFZERTQSIsImp3ayI6eyJrdHkiOiJPS1AiLCJjcnYiOiJFZDI1NTE5IiwieCI6IkNsWEJQeVpyTTNEWXlBUzFpYXBuS0ZaYlJXOUw5X3pEYk1Lb29IdlJxWEUifX0\",
-                \"signature\": \"ndGBqEKDU-bHPKGwPq7RQAe0peve0nrXvpqBXvWy6bWw-GOCwrTFEC8JIzsnGKbHR81SiyLVd2JespsTZ_KOCA\",
-                \"header\": { \"kid\": \"did:key:z6Mkf9bxtpvqPMimswSwNb9wz7TewzB4TZAaybpS8Gkpkt3A\" },
-                \"payload\": \"Zjk3MDI4OGVjZGMxNzYzOWUxZDYwNmExNGRiYjQ1MWQ1YTMzNWViMjQ0YzRlNWRlNjg1MTE2NWIwMTFhNjZhMQ\"
+              "E": "nePRmiWKTfn_IoFu4yOHKXRHXvrbXc-DkdHta8kQwS1PX0QtOG…7UhpxmcA",
+              "Y": "395bb593e938de9c19cf6338473a1b60.OUfG-f9yfmNiH-_Ep…sfs5KQ0g",
+              "h": "28b3b5a9a52827c621f219ffda9239e81fb3736bcbe0fa1ac7c72da0d3e71b86",
+              "hK": "71b7d68edda23de16a074a20991d6868d15d2a89120faae7ab468c9d5fe63a93",
+              "nro": {
+                "@context": [
+                  "https://www.w3.org/2018/credentials/v1",
+                  "https://secureapp.solidcommunity.net/public/NonRep…t.jsonld"
+                ],
+                "id": "urn:uuid:fb21d1a8-0a5d-4cc6-9c1e-e1f71795b021",
+                "type": [
+                  "VerifiableCredential",
+                  "NonRepudiableOrigin"
+                ],
+                "issuer": "did:web:raw.githubusercontent.com:biagioboi:Commun…ver:main",
+                "issuanceDate": "2026-11-23T17:59:44.15Z",
+                "credentialSubject": {
+                  "id": "did:web:privateclinic.solidcommunity.net:public",
+                  "signedHash": "102908bc6f624e631f460b1356009c65dbc1fb6c805a89c4c53af2b2348dff2a"
+                },
+                "proof": {
+                  "verificationMethod": "did:web:raw.githubusercontent.com:biagioboi:Commun…8Gkpkt3A",
+                  "type": "Ed25519Signature2018",
+                  "created": "2026-11-23T17:59:44Z",
+                  "proofPurpose": "assertionMethod",
+                  "jws": "eyJhbGciOiJFZERTQSIsImI2NCI6ZmFsc2UsImNyaXQiOlsiYj…pdOwjICg"
+                }
               }
             }
             ```
-
-            > [!NOTE]
-            > `signatureFromCSS` is a flattened JWS object (not a compact string); its `payload`
-            > base64-decodes to the `messageHash` (`f970288e…`) and `header.kid` is the CSS's
-            > `did:key:z6Mkf9bxtpvqPMimswSwNb9wz7TewzB4TZAaybpS8Gkpkt3A`.
-
-            > [!WARNING]
-            > No key is returned to the app yet — it stays **escrowed at the CSS** until a
-            > valid NRR is verified.
-
-            > [!IMPORTANT]
-            > Older docs saying `hash(resource, keyForDecrypt)` are wrong — see step 3:
-            > the hash covers the **plaintext resource only**.
             """
         }
-
 
         alt "release path" {
           when "5a — release via CSS" {
-            app -> css "GET resource (header: signedresource = [NRR JSON])" {
+            app -> css "m13 · GET resource (signedresource = NRR)" {
               technology "HTTPS"
               notes """
-            Step **4** — the app signs the receipt as a **NonRepudiationDestination** VC
-            (issuer = app DID, subject = requesterDid, requestedResource, signedHash = messageHash)
-            and only then picks a release path — the NRR is the only thing that unlocks the escrowed key.
+                **Phase 5a — release via CSS** (trace `4fbb8cd9…`). The app UI calls `POST /completeNonRepudiableRelease`
+                with `useTtp: false`. The app verifies the NRO (`vc.verifyCredential`), recomputes C and signs it:
+                m13 = sig(C, sk_a), the **NonRepudiationDestination** (`signedHash` = C).
 
-            * `verifySignedResource(NRR)` — verify the VC signature, then match
-              **signedHash / requesterDid / requestedResource** against the pending context
-            * `jwsGraphService.storeVerifiedJws(...)` — CSS-side non-repudiation evidence
-              (stored record id `b6aa2e7d2ee4103959a14da6361d67bda6acc2235f673116a70a021f1039fde2`, captured from `vera.record`)
-            * escrowed key + pending context deleted
+                `signedresource` header — the NRR:
 
-            Captured NRR (`signedresource` header value, stored in the CSS audit — proof shortened):
-
-            ```json
-            {
-              \"@context\": [\"https://www.w3.org/2018/credentials/v1\", \"https://privateclinic.solidcommunity.net/public/NonRepudiationContext.jsonld\"],
-              \"id\": \"urn:uuid:f65ea059-7110-4c2f-88b4-82e87bdf17c4\",
-              \"type\": [\"VerifiableCredential\", \"NonRepudiationDestination\"],
-              \"issuer\": \"did:web:privateclinic.solidcommunity.net:public\",
-              \"issuanceDate\": \"2026-10-07T00:11:50.10Z\",
-              \"credentialSubject\": {
-                \"id\": \"did:web:bboi.solidcommunity.net:public\",
-                \"requestedResource\": \"http://localhost:3002/my-pod/test-folder/dual-mode-resource.txt\",
-                \"signedHash\": \"f970288ecdc17639e1d606a14dbb451d5a335eb244c4e5de6851165b011a66a1\"
-              },
-              \"proof\": { \"type\": \"Ed25519Signature2018\", \"proofPurpose\": \"assertionMethod\", \"jws\": \"eyJhbGciOiJFZERTQSIsImI2NCI6ZmFsc2UsImNyaXQiOlsiYjY0Il19..sUNMq0NeinEC5UZUY_tiCYlIWpRCpNHcLQ2NpjrmvLWAPm3ycnsokG44fwW881_8eTTKOsN3nTRaQVKExw5xBA\" }
+                ```json
+                {
+                  "@context": [
+                    "https://www.w3.org/2018/credentials/v1",
+                    "https://privateclinic.solidcommunity.net/public/No…t.jsonld"
+                  ],
+                  "id": "urn:uuid:4b5dec3b-c8bd-4fff-8aa1-8fd022ad5dee",
+                  "type": [
+                    "VerifiableCredential",
+                    "NonRepudiationDestination"
+                  ],
+                  "issuer": "did:web:privateclinic.solidcommunity.net:public",
+                  "issuanceDate": "2026-11-23T17:59:47.87Z",
+                  "credentialSubject": {
+                    "id": "did:web:raw.githubusercontent.com:biagioboi:Commun…ver:main",
+                    "signedHash": "102908bc6f624e631f460b1356009c65dbc1fb6c805a89c4c53af2b2348dff2a"
+                  },
+                  "proof": {
+                    "verificationMethod": "did:web:privateclinic.solidcommunity.net:public#z6…sKuUGG6R",
+                    "type": "Ed25519Signature2018",
+                    "created": "2026-11-23T17:59:47Z",
+                    "proofPurpose": "assertionMethod",
+                    "jws": "eyJhbGciOiJFZERTQSIsImI2NCI6ZmFsc2UsImNyaXQiOlsiYj…RohIOcDA"
+                  }
+                }
+                ```
+                """
             }
-            ```
 
-            > [!TIP]
-            > The CSS audit endpoint is `GET /.internal/jws-audit/query` (demo: `:3002`); the
-            > `/detail/` prefix returns `401` on this deployment.
-            """
-            }
-            css -> app "keyfordecrypt header" {
+            css -> app "m14 · 200 keyfordecrypt (K_R)" {
               technology "HTTPS"
               notes """
-            > [!NOTE]
-            > The key release is **single-use**: `lastKeyForMsgEncryption[hash]` is deleted
-            > once the NRR is accepted.
+                The CSS verifies the NRR against the pending release (same C, signed by DID_A), stores it
+                (`css.storeVerifiedJws`) and releases K_R. The app decrypts E locally.
 
-            Captured header value (JSON-encoded 32-byte sym key, fresh per release — `http.response.header.keyfordecrypt`):
+                `keyfordecrypt` header:
 
-            ```json
-            {\"0\":235,\"1\":166,\"2\":242,\"3\":48,\"4\":120,\"5\":166,\"6\":123,\"7\":145,\"8\":131,\"9\":12,\"10\":216,\"11\":101,\"12\":211,\"13\":213,\"14\":209,\"15\":33,\"16\":44,\"17\":95,\"18\":169,\"19\":108,\"20\":83,\"21\":3,\"22\":190,\"23\":241,\"24\":130,\"25\":205,\"26\":126,\"27\":76,\"28\":173,\"29\":142,\"30\":77,\"31\":194}
-            ```
-            """
+                ```json
+                "JTBXqKWrXaNN1WNLGm4ZrOXnQolJkcf5m1MzCpOapWU"
+                ```
+
+                Stored evidence:
+
+                ```json
+                {
+                  "id": "057fb08619c62fad50e536315d9dbf0eb4a0a240ddedc6581f372299229da77e",
+                  "signedResource": "(the NRR above)",
+                  "signedResourceType": "vc",
+                  "requestedResource": "http://localhost:3002/my-pod/test-folder/dual-mode-resource.txt",
+                  "requesterDid": "did:web:privateclinic.solidcommunity.net:public",
+                  "messageHash": "102908bc6f624e631f460b1356009c65dbc1fb6c805a89c4c53af2b2348dff2a",
+                  "verifiedAt": "2026-11-23T17:59:47.915Z",
+                  "signerId": "did:web:privateclinic.solidcommunity.net:public#z6…sKuUGG6R"
+                }
+                ```
+
+                Result returned to the app UI:
+
+                ```json
+                {
+                  "content": "This resource has two access modes depending on wh…l:Read. ",
+                  "releasedBy": "css",
+                  "commitment": "102908bc6f624e631f460b1356009c65dbc1fb6c805a89c4c53af2b2348dff2a"
+                }
+                ```
+                """
             }
           }
           else "5b — release via TTP" {
-            app -> ttp "checkResource (encryptedMessage, nrr)" {
+            app -> ttp "m15 · POST /checkResource" {
               technology "HTTPS"
-              description "The app goes straight to the escrow; the CSS never sees the NRR."
               notes """
-            Step **4** — the NRR it sends is the same **NonRepudiationDestination** VC the
-            app signed in 5a (subject = requesterDid, requestedResource, signedHash = messageHash).
+                **Phase 5b — release via TTP** (second run, trace `3472aa18…`): `POST /completeNonRepudiableRelease`
+                with `useTtp: true`. m15 = (uri, n_c, H(E), Y, h, h_K, NRO, m13): everything the TTP needs
+                to recompute C, but not E, which never leaves the app.
 
-            TTP-side checks (observed as Tempo spans on `POST /checkResource`):
+                Request body:
 
-            * `didcomm.unpack` — the TTP decrypts the JWE with its key (`payloadKey` = sym key)
-            * `vc.verifyCredential` ×3 — NRR signature + NRO consistency (hashCredential / signatureFromCSS vs hash)
-            * client `did.json` lookups — resolving the CSS did:web for the NRO verification
+                ```json
+                {
+                  "didU": "did:web:bboi.solidcommunity.net:public",
+                  "uri": "http://localhost:3002/my-pod/test-folder/dual-mode-resource.txt",
+                  "nc": "S1L5AcZhuDt2Soy834MpZw==",
+                  "hE": "40c88e39d3e2b61f6b2f285245985307be957c937e5e0010de484b0b2d1d046b",
+                  "Y": "395bb593e938de9c19cf6338473a1b60.myLTd70Npgc3YSsyz…4GIU1kgw",
+                  "h": "accb2de97f940031d4e2e028ae111bf609d05d50fe9bd187d6f17a5bf1ad6119",
+                  "hK": "2aba4a910da8165454039c57f397a0cb18ec7038909d47b0a854b8cd5f2dc1a6",
+                  "nro": {
+                    "@context": [
+                      "https://www.w3.org/2018/credentials/v1",
+                      "https://secureapp.solidcommunity.net/public/NonRep…t.jsonld"
+                    ],
+                    "id": "urn:uuid:5a07b653-403d-4864-9c08-aeaaef621765",
+                    "type": [
+                      "VerifiableCredential",
+                      "NonRepudiableOrigin"
+                    ],
+                    "issuer": "did:web:raw.githubusercontent.com:biagioboi:Commun…ver:main",
+                    "issuanceDate": "2026-11-23T18:12:09.48Z",
+                    "credentialSubject": {
+                      "id": "did:web:privateclinic.solidcommunity.net:public",
+                      "signedHash": "b4bf286d5126c77c0b8ee6350bb78d3b557190f709367e2e1fbbe201f41f0a1e"
+                    },
+                    "proof": {
+                      "verificationMethod": "did:web:raw.githubusercontent.com:biagioboi:Commun…8Gkpkt3A",
+                      "type": "Ed25519Signature2018",
+                      "created": "2026-11-23T18:12:09Z",
+                      "proofPurpose": "assertionMethod",
+                      "jws": "eyJhbGciOiJFZERTQSIsImI2NCI6ZmFsc2UsImNyaXQiOlsiYj…N8_0xaAg"
+                    }
+                  },
+                  "nrr": {
+                    "@context": [
+                      "https://www.w3.org/2018/credentials/v1",
+                      "https://privateclinic.solidcommunity.net/public/No…t.jsonld"
+                    ],
+                    "id": "urn:uuid:8e2eaada-2582-4b29-b155-5c9155a78dc8",
+                    "type": [
+                      "VerifiableCredential",
+                      "NonRepudiationDestination"
+                    ],
+                    "issuer": "did:web:privateclinic.solidcommunity.net:public",
+                    "issuanceDate": "2026-11-23T18:12:11.24Z",
+                    "credentialSubject": {
+                      "id": "did:web:raw.githubusercontent.com:biagioboi:Commun…ver:main",
+                      "signedHash": "b4bf286d5126c77c0b8ee6350bb78d3b557190f709367e2e1fbbe201f41f0a1e"
+                    },
+                    "proof": {
+                      "verificationMethod": "did:web:privateclinic.solidcommunity.net:public#z6…sKuUGG6R",
+                      "type": "Ed25519Signature2018",
+                      "created": "2026-11-23T18:12:11Z",
+                      "proofPurpose": "assertionMethod",
+                      "jws": "eyJhbGciOiJFZERTQSIsImI2NCI6ZmFsc2UsImNyaXQiOlsiYj…KqLOiCCQ"
+                    }
+                  }
+                }
+                ```
 
-            The TTP also stores its own receipt evidence (`nrrGraphService.storeReceivedNrr`):
-            `.internal/nrr-audit/records/<sha256>.ttl` with `messageHash` and `signedResourceFingerprint`
-            (file-based, no read endpoint).
+                The TTP does all the checks (`checkResource`, as in the model):
 
-            > [!IMPORTANT]
-            > Only `{ encryptedResource, nrr }` is sent — `requestedResource` and
-            > `requesterDid` live inside the NRR subject, not as separate parameters.
-            """
+                1. opens **Y** with K_ttp (selected by `kid`) and checks it is bound to DID_A (the NRR signer), n_c and H(E);
+                2. checks H(K_R) = **h_K**;
+                3. recomputes **C** and checks the NRO is the CSS signature on C;
+                4. checks the NRR (m13) is the app signature on C;
+                5. stores the NRR in its own `nrr-audit`.
+                """
             }
-            ttp -> app "keyForDecrypt" {
+
+            ttp -> app "m16 · keyForDecrypt (K_R)" {
               technology "HTTPS"
               notes """
-            Response body: `{ \"symKeyForDecrypt\": <32-byte key>, \"verification\": {…}, \"nrrRecordId\": \"64bd64e7c67b52dad2328ce10bb376feb322f7a2a0bdf0d39f4d9e62ccf7c759\" }`
-            (nrrRecordId captured from a live 5b run).
+                Only after all checks pass the TTP releases K_R to the app. The release never waits for the CSS,
+                which may be offline or a party to the dispute.
 
-            > [!TIP]
-            > In the demo UI choose **Release via TTP**; the CSS audit then does **not**
-            > grow (stays empty), while the TTP's `nrr-audit` gains a record — that split
-            > is how the two paths can be told apart.
-            """
+                Response body:
+
+                ```json
+                {
+                  "keyForDecrypt": "VNBo8G_d6otS-Nw8pKXyUX4u0tvYiEzVbSs5-rqm_8I",
+                  "commitment": "b4bf286d5126c77c0b8ee6350bb78d3b557190f709367e2e1fbbe201f41f0a1e",
+                  "nrrRecordId": "8d03bc9d009de25fe8d542af958f1728ad03cb1bbab2ba5f7a7b795d01cc094b"
+                }
+                ```
+
+                Result returned to the app UI:
+
+                ```json
+                {
+                  "content": "This resource has two access modes depending on wh…l:Read. ",
+                  "releasedBy": "ttp",
+                  "commitment": "b4bf286d5126c77c0b8ee6350bb78d3b557190f709367e2e1fbbe201f41f0a1e"
+                }
+                ```
+                """
+            }
+
+            ttp -> css "m17 · forward NRR (ttpreceipt)" {
+              technology "HTTPS"
+              notes """
+                After m16 the TTP forwards the NRR to the CSS, so the origin also gets its proof of receipt.
+                No check happens here on the TTP side: it is a delivery, sealed under K_ttp
+                (`kid . AEAD_K_ttp({nrr, uri})`, tag `VERA-M17`) so the CSS knows it comes from the TTP it shares
+                K_ttp with. It travels as the `ttpreceipt` header of a `GET` on the resource; the CSS answers 200
+                with no body.
+
+                `ttpreceipt` header:
+
+                ```json
+                "395bb593e938de9c19cf6338473a1b60.deY0EbFsWCAhzgVAk…OaNgbDSg"
+                ```
+
+                The CSS (`acceptNrrFromTtp`) opens the receipt, checks the NRR is the app signature on C and stores it:
+
+                Stored evidence:
+
+                ```json
+                {
+                  "id": "5059f9e02b76f3d30cf7760710c943db49b5af688c46ce7ae437f047ecb1d105",
+                  "signedResource": "(the NRR of m15)",
+                  "signedResourceType": "vc",
+                  "requestedResource": "http://localhost:3002/my-pod/test-folder/dual-mode-resource.txt",
+                  "requesterDid": "did:web:privateclinic.solidcommunity.net:public",
+                  "messageHash": "b4bf286d5126c77c0b8ee6350bb78d3b557190f709367e2e1fbbe201f41f0a1e",
+                  "verifiedAt": "2026-11-23T18:12:11.572Z",
+                  "signerId": "did:web:privateclinic.solidcommunity.net:public#z6…sKuUGG6R"
+                }
+                ```
+                """
             }
           }
         }
       }
     }
 
-    app -> user "Deliver resource to the User" {
+    app -> user "Deliver resource" {
       notes """
-        Step **6** — `keyForDecrypt` is used to decrypt the JWE locally
-        (chacha20-poly1305) and the plaintext is shown in the app UI.
+        The app shows the decrypted resource — same plaintext on both release paths
+        (`releasedBy = css` in 5a, `releasedBy = ttp` in 5b).
 
-        Delivered plaintext (identical to the 3a body — captured from a live run):
+        Plaintext:
 
         ```text
-        This resource has two access modes depending on who asks: privateclinic gets it only
-        via non-repudiable read (acl:NRRead), publichospital gets it via plain acl:Read/acl:Write.
+        This resource has two access modes depending on who asks: secureapp gets it only
+        via non-repudiable read (acl:NRRead), secureapp-2 gets it via plain acl:Read.
+
         ```
 
-        > [!TIP]
-        > **demo-app-1 (Private Clinic)** runs the whole NRRead branch on
-        > `dual-mode-resource.txt`; `nr-resource.txt` is NRRead-only.
+        Then `GET /.internal/nro-audit/query`: 1 record after the CSS release (`47686a35…`),
+        2 after the TTP release (`d505b100…`).
         """
     }
   }

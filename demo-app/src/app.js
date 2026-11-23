@@ -314,6 +314,13 @@ function toInternalCssUrl(url) {
 const nroGraphService = new NroGraphService({
     rootFilePath: path.join(__dirname, '..'),
 });
+const {
+    fromBase64Url,
+    hashCiphertext,
+    hashKey,
+    computeCommitment,
+    decryptResource,
+} = require('./vera-crypto');
 
 async function startEverything() {
     agent = await initializeIssuerAgent(sys_config.get('wallet.ledger_url'), sys_config.get('wallet.endpoint'));
@@ -330,9 +337,6 @@ const {W3cJsonLdCredentialService} = require("@credo-ts/core/build/modules/vc/da
 
 const app = express();
 const PORT = 8080;
-let iv;
-let ciphertext;
-let tag;
 startEverything().then(result => {
     /* Empty */
 })
@@ -554,11 +558,6 @@ async function ourListener(payload, requestBody, onFlowReady, onProofReady) {
 
                 agent.events.off(ProofEventTypes.ProofStateChanged, handleProofStateChanged)
 
-                if (requestBody.cssInvitationConnection) {
-                    await agent.basicMessages.sendMessage(requestBody.cssInvitationConnection, JSON.stringify(presentationToSend));
-                    return
-                }
-
                 await onProofReady?.(presentationToSend)
             })
         }
@@ -653,9 +652,7 @@ app.post('/requestUserCredential', async (req, res) => {
             error: error.message ?? 'Unable to deserialize the proof request.',
         })
     }
-    const usesDidcommReturnChannel = Boolean(requestBody.cssInvitationConnection)
     let flowFinished = false
-    let pendingNroAudit;
 
 
     /* Is the domain what we want for the request (VPR)? */
@@ -666,9 +663,6 @@ app.post('/requestUserCredential', async (req, res) => {
 
     const removeFlowListeners = () => {
         agent.events.off(ConnectionEventTypes.ConnectionStateChanged, handleConnectionStateChanged)
-        if (usesDidcommReturnChannel) {
-            agent.events.off(BasicMessageEventTypes.BasicMessageStateChanged, handleBasicMessageStateChanged)
-        }
     }
 
     // Guards against handling the same connection twice - it may already be Completed by the
@@ -688,7 +682,7 @@ app.post('/requestUserCredential', async (req, res) => {
                 flowFinished = true
                 agent.events.off(ConnectionEventTypes.ConnectionStateChanged, handleConnectionStateChanged)
             }, async (proof) => {
-                if (usesDidcommReturnChannel || res.headersSent) return
+                if (res.headersSent) return
                 res.json(proof)
                 removeFlowListeners()
             })
@@ -697,54 +691,7 @@ app.post('/requestUserCredential', async (req, res) => {
 
     const handleConnectionStateChanged = ({payload}) => handleConnectionReady(payload.connectionRecord)
 
-    const handleBasicMessageStateChanged = (payload) => {
-        runAsyncTask('demo-app request user credential basic message listener', async () => {
-        try {
-            const objPayload = JSON.parse(payload.payload.message.content);
-            if (objPayload.protected !== undefined) {
-                iv = objPayload.iv;
-                ciphertext = objPayload.ciphertext;
-                tag = objPayload.tag;
-
-                // It is the message we were waiting for (Encrypted resource)
-                console.log(JSON.stringify(objPayload));
-                const resp = await createNrrCredential(agent, objPayload, requestBody);
-                pendingNroAudit = await preparePendingNroAudit(agent, objPayload, requestBody, resp);
-
-                // Future TTP-mediated key release flow. Disabled for now because the
-                // current protocol still asks the CSS to release the symmetric key.
-                // await requestSymmetricKeyFromTtp({
-                //     encryptedResource: objPayload,
-                //     nrr: resp, // VC-based NRR issued by the app
-                // });
-
-                await agent.basicMessages.sendMessage(requestBody.cssInvitationConnection, JSON.stringify({signedResource: resp}));
-            } else if (objPayload.keyForDecrypt !== undefined) {
-                const msg_dec = decryptEncryptedMessage({iv, ciphertext, tag}, objPayload.keyForDecrypt);
-                if (pendingNroAudit) {
-                    await finalizePendingNroAudit(pendingNroAudit, msg_dec);
-                    pendingNroAudit = undefined;
-                }
-                res.json(msg_dec);
-                removeFlowListeners()
-            }
-        } catch (error) {
-            console.error(`[demo-app basic message handling] ${error.stack || error.message}`);
-            pendingNroAudit = undefined;
-            if (!res.headersSent) {
-                res.status(400).json({
-                    error: error.message ?? 'Unable to process the non-repudiation flow.',
-                });
-            }
-            removeFlowListeners()
-        }
-        })
-    }
-
     agent.events.on(ConnectionEventTypes.ConnectionStateChanged, handleConnectionStateChanged)
-    if (usesDidcommReturnChannel) {
-        agent.events.on(BasicMessageEventTypes.BasicMessageStateChanged, handleBasicMessageStateChanged)
-    }
     res.on('close', removeFlowListeners)
 
     if (requestBody.connectionId) {
@@ -756,56 +703,67 @@ app.post('/requestUserCredential', async (req, res) => {
     }
 })
 
-// Completes the non-repudiable release for the plain-HTTPS flow (no DIDComm connection to the
-// CSS): the browser already has the `encryptedresource` header from a `vp`-authenticated GET.
-// This signs the NRR and releases the decryption key, either via the CSS (`signedresource`
-// header, default) or directly via the TTP's `checkResource` (when `useTtp` is set), then
-// decrypts locally and returns the plaintext resource.
+// Completes the non-repudiable release (paper Section 3.3): the browser already holds the
+// `encryptedresource` header (E, Y, h, h_K, NRO) from a `vp`-authenticated GET, plus the VPR it answered.
+// The app recomputes C, checks the NRO, signs the NRR on C and obtains K_R from the CSS (`signedresource`
+// header) or, when `useTtp` is set or the CSS fails to release a key matching h_K, from the TTP.
+// It then decrypts E and checks it against h.
 app.post('/completeNonRepudiableRelease', async (req, res) => {
     try {
-        const {url, agent: requesterAgent, encryptedResource, useTtp} = req.body;
-        const encryptedMessage = typeof encryptedResource === 'string' ? JSON.parse(encryptedResource) : encryptedResource;
-        if (!url || !encryptedMessage) {
-            return res.status(400).json({error: 'Missing url or encryptedResource.'});
+        const {url, agent: didU, encryptedResource, vpr, useTtp} = req.body;
+        const release = parseJsonIfNeeded(encryptedResource);
+        const proofRequest = vpr ? deserializeProofRequest(vpr) : undefined;
+        if (!url || !didU || !release || !proofRequest) {
+            return res.status(400).json({error: 'Missing url, agent, vpr or encryptedResource.'});
         }
 
-        const requestBody = {agent: requesterAgent, target: url};
-        const nrr = await createNrrCredential(agent, encryptedMessage, requestBody);
-        const pendingNroAudit = await preparePendingNroAudit(agent, encryptedMessage, requestBody, nrr);
+        const requestAcp = proofRequest.presentation_definition?.requestACP ?? {};
+        if (requestAcp.target !== url) {
+            throw new Error('The VPR does not refer to the requested resource.');
+        }
+        const context = {
+            didV: requestAcp.owner,
+            didA: APP_DID,
+            didU,
+            uri: url,
+            nc: proofRequest.options?.challenge,
+        };
+        const {commitment, hE} = await verifyReleaseAndComputeCommitment(agent, release, context);
+        await nroGraphService.storeVerifiedNro({
+            nro: release.nro,
+            requestedResource: url,
+            requesterDid: APP_DID,
+            messageHash: commitment,
+            issuerDid: context.didV,
+            verifiedAt: new Date().toISOString(),
+        });
+        const nrr = await createNrrCredential(agent, context.didV, commitment);
 
-        let keyForDecrypt;
-        if (useTtp) {
-            const ttpResult = await requestSymmetricKeyFromTtp({encryptedResource: encryptedMessage, nrr});
-            keyForDecrypt = ttpResult.symKeyForDecrypt ?? ttpResult.keyForDecrypt;
-        } else {
-            // Connect via the docker network, but tell the CSS the original Host/protocol via
-            // X-Forwarded-*: the CSS resolves resource identifiers against the Host header (or
-            // its Forwarded/X-Forwarded-Host override) - a raw `host` header can't be spoofed
-            // through fetch() (forbidden by the Fetch spec even server-side), so use the
-            // reverse-proxy convention CSS already supports instead (OriginalUrlExtractor).
-            const originalUrl = new URL(url);
-            const releaseResponse = await fetch(toInternalCssUrl(url), {
-                headers: {
-                    signedresource: JSON.stringify(nrr),
-                    'x-forwarded-host': originalUrl.host,
-                    'x-forwarded-proto': originalUrl.protocol.replace(':', ''),
-                },
-            });
-            if (!releaseResponse.ok) {
-                throw new Error(await releaseResponse.text());
+        let kR;
+        let releasedBy = 'ttp';
+        if (!useTtp) {
+            try {
+                kR = await requestKeyFromCss(url, nrr);
+                if (hashKey(kR) !== release.hK) {
+                    throw new Error('The key released by the CSS does not match h_K.');
+                }
+                releasedBy = 'css';
+            } catch (error) {
+                console.warn(`[demo-app completeNonRepudiableRelease] CSS release failed, turning to the TTP: ${error.message}`);
+                kR = undefined;
             }
-            keyForDecrypt = releaseResponse.headers.get('keyfordecrypt');
+        }
+        if (kR === undefined) {
+            kR = await requestKeyFromTtp({...context, hE, release, nrr});
+            if (hashKey(kR) !== release.hK) {
+                throw new Error('The key released by the TTP does not match h_K.');
+            }
         }
 
-        if (keyForDecrypt === undefined || keyForDecrypt === null) {
-            throw new Error('No decryption key was released.');
-        }
-
-        const content = decryptEncryptedMessage(encryptedMessage, keyForDecrypt);
-        if (pendingNroAudit) {
-            await finalizePendingNroAudit(pendingNroAudit, content);
-        }
-        res.json({content});
+        // A key matching h_K that does not open E into a plaintext matching h is an inconsistent
+        // release by the CSS: the stored NRO is the evidence of it.
+        const {resource} = decryptResource(release.E, kR, release.h);
+        res.json({content: resource, releasedBy, commitment});
     } catch (error) {
         console.error(`[demo-app completeNonRepudiableRelease] ${error.stack || error.message}`);
         res.status(400).json({error: error.message ?? 'Unable to complete the non-repudiable release.'});
@@ -882,67 +840,52 @@ function getAskarAnonCredsIndyModules(genesisTransactionsBCovrinTestNet) {
     }
 }
 
-async function preparePendingNroAudit(agent, encryptedMessage, requestBody, appSignedResource) {
-    if (encryptedMessage.hashCredential === undefined) {
-        return undefined;
+// Recomputes C from the received E, Y, h, h_K and from the identities and nonce of the VPR, and checks
+// that the NRO is a signature of the CSS on that value.
+async function verifyReleaseAndComputeCommitment(agent, release, context) {
+    for (const [name, value] of Object.entries({...context, E: release?.E, Y: release?.Y, h: release?.h, hK: release?.hK})) {
+        if (typeof value !== 'string') {
+            throw new Error(`Missing ${name} for the non-repudiable release.`);
+        }
     }
 
-    const messageHash = typeof encryptedMessage.hash === 'string'
-        ? encryptedMessage.hash
-        : extractSignedHashFromHashCredential(encryptedMessage.hashCredential);
-    if (!messageHash) {
-        throw new Error('Could not extract the message hash from the NRO material.');
+    const hE = hashCiphertext(release.E);
+    const commitment = computeCommitment({...context, hE, Y: release.Y, h: release.h, hK: release.hK});
+    const nro = await verifyCommitmentCredential(agent, release.nro);
+    if (nro.issuer !== context.didV || nro.commitment !== commitment) {
+        throw new Error('The NRO is not a signature of the CSS on C.');
     }
 
-    const cssSignatureHash = await verifyCssSignatureAndExtractHash(agent, encryptedMessage.signatureFromCSS);
-    if (cssSignatureHash !== undefined && cssSignatureHash !== messageHash) {
-        throw new Error('The CSS signature does not match the NRO message hash.');
-    }
-
-    const nroCredential = await verifyNroCredential(agent, encryptedMessage.hashCredential);
-    const issuerDid = typeof nroCredential.issuer === 'string' ? nroCredential.issuer : nroCredential.issuer?.id;
-    const requesterDid = extractRequesterDidFromHashCredential(nroCredential) ?? requestBody.agent;
-
-    if (!requesterDid) {
-        throw new Error('Could not determine the requester DID for the NRO audit record.');
-    }
-
-    if (requestBody.agent && requesterDid !== requestBody.agent) {
-        throw new Error('The requester DID in the NRO does not match the original access request.');
-    }
-
-    const requestedResource = requestBody.target ?? requestBody.resource ?? requestBody.url;
-    if (!requestedResource) {
-        throw new Error('Could not determine the requested resource for the NRO audit record.');
-    }
-
-    return {
-        appSignedResource,
-        connectionId: requestBody.cssInvitationConnection,
-        issuerDid,
-        messageHash,
-        nro: nroCredential,
-        requestedResource,
-        requesterDid,
-        signatureFromCss: parseJsonIfNeeded(encryptedMessage.signatureFromCSS),
-    };
+    return {commitment, hE};
 }
 
-async function finalizePendingNroAudit(pendingNroAudit, decryptedMessage) {
-    // decryptedMessage is now the plain content string (see decryptEncryptedMessage) - hash it
-    // directly, matching how the CSS/TTP compute the reference hash.
-    const decryptedHash = crypto.createHash('sha256').update(decryptedMessage).digest('hex');
-    if (decryptedHash !== pendingNroAudit.messageHash) {
-        throw new Error('The decrypted payload does not match the message hash stored in the NRO.');
-    }
-
-    return await nroGraphService.storeVerifiedNro({
-        ...pendingNroAudit,
-        verifiedAt: new Date().toISOString(),
+async function requestKeyFromCss(url, nrr) {
+    // Connect via the docker network, but tell the CSS the original Host/protocol via
+    // X-Forwarded-*: the CSS resolves resource identifiers against the Host header (or
+    // its Forwarded/X-Forwarded-Host override) - a raw `host` header can't be spoofed
+    // through fetch() (forbidden by the Fetch spec even server-side), so use the
+    // reverse-proxy convention CSS already supports instead (OriginalUrlExtractor).
+    const originalUrl = new URL(url);
+    const releaseResponse = await fetch(toInternalCssUrl(url), {
+        headers: {
+            signedresource: JSON.stringify(nrr),
+            'x-forwarded-host': originalUrl.host,
+            'x-forwarded-proto': originalUrl.protocol.replace(':', ''),
+        },
     });
+    if (!releaseResponse.ok) {
+        throw new Error(await releaseResponse.text());
+    }
+
+    const keyForDecrypt = releaseResponse.headers.get('keyfordecrypt');
+    if (!keyForDecrypt) {
+        throw new Error('The CSS did not release a key.');
+    }
+    return fromBase64Url(keyForDecrypt);
 }
 
-async function requestSymmetricKeyFromTtp({encryptedResource, nrr, ttpCheckResourceUrl = TTP_CHECK_RESOURCE_URL}) {
+// TTP Resolution (m15): everything the TTP needs to recompute C, but not the ciphertext E.
+async function requestKeyFromTtp({didU, uri, nc, hE, release, nrr, ttpCheckResourceUrl = TTP_CHECK_RESOURCE_URL}) {
     const response = await fetch(ttpCheckResourceUrl, {
         method: 'POST',
         headers: {
@@ -950,7 +893,14 @@ async function requestSymmetricKeyFromTtp({encryptedResource, nrr, ttpCheckResou
             'Content-Type': 'application/json',
         },
         body: JSON.stringify({
-            encryptedResource,
+            didU,
+            uri,
+            nc,
+            hE,
+            Y: release.Y,
+            h: release.h,
+            hK: release.hK,
+            nro: release.nro,
             nrr,
         }),
     });
@@ -965,28 +915,11 @@ async function requestSymmetricKeyFromTtp({encryptedResource, nrr, ttpCheckResou
     if (!response.ok) {
         throw new Error(responseJson.error || `TTP checkResource failed with status ${response.status}.`);
     }
-
-    return responseJson;
-}
-
-// Decrypts a previously received encrypted resource envelope once `keyForDecrypt` is released
-// (either by the CSS, over the `signedresource`/`keyfordecrypt` headers, or by the TTP via
-// `checkResource`'s `symKeyForDecrypt`). `keyForDecryptRaw` may already be an array-like object
-// (as produced by JSON.stringify-ing a Uint8Array) or a JSON string carrying the same shape.
-function decryptEncryptedMessage({iv, ciphertext}, keyForDecryptRaw) {
-    const keyForDecrypt = typeof keyForDecryptRaw === 'string' ? JSON.parse(keyForDecryptRaw) : keyForDecryptRaw;
-    const arrayForKey = [];
-    for (const key in keyForDecrypt) {
-        arrayForKey.push(keyForDecrypt[key]);
+    if (typeof responseJson.keyForDecrypt !== 'string') {
+        throw new Error('The TTP did not release a key.');
     }
-    const symKeyForDecrypt = Uint8Array.from(arrayForKey);
-    const nonce_array = TypedArrayEncoder.fromBase64(iv);
-    const ciphertext_array = TypedArrayEncoder.fromBase64(ciphertext);
-    const decipher = crypto.createDecipheriv('chacha20-poly1305', symKeyForDecrypt, nonce_array, {authTagLength: 16});
-    const decrypted = JsonEncoder.fromBuffer(decipher.update(ciphertext_array));
-    // The decrypted bytes are the whole DIDComm BasicMessage envelope - unwrap to the plain
-    // content string, which is what the CSS/TTP hash and what the UI wants to display.
-    return typeof decrypted === 'string' ? decrypted : decrypted?.content ?? decrypted;
+
+    return fromBase64Url(responseJson.keyForDecrypt);
 }
 
 function createDemoAppDocumentLoader(agentContext, currentDidDocument) {
@@ -1030,7 +963,8 @@ function createDemoAppDocumentLoader(agentContext, currentDidDocument) {
     }
 }
 
-async function createNrrCredential(agent, encryptedMessage, requestBody) {
+// NRR = sig(C, sk_A), issued as a credential whose subject is the CSS the resource comes from.
+async function createNrrCredential(agent, didV, commitment) {
     const [appDidRecord] = await agent.dids.getCreatedDids({method: 'web', did: APP_DID})
     const currentDid = appDidRecord ?? (await agent.dids.getCreatedDids({method: 'web'}))[0]
 
@@ -1043,19 +977,6 @@ async function createNrrCredential(agent, encryptedMessage, requestBody) {
         throw new Error('Could not determine the app verification method for the NRR credential.')
     }
 
-    const messageHash = typeof encryptedMessage.hash === 'string'
-        ? encryptedMessage.hash
-        : extractSignedHashFromHashCredential(encryptedMessage.hashCredential)
-    if (!messageHash) {
-        throw new Error('Could not determine the message hash for the NRR credential.')
-    }
-
-    const requesterDid = requestBody.agent ?? extractRequesterDidFromHashCredential(encryptedMessage.hashCredential)
-    if (!requesterDid) {
-        throw new Error('Could not determine the requester DID for the NRR credential.')
-    }
-
-    const requestedResource = requestBody.target ?? requestBody.resource ?? requestBody.url
     const suite = await createAppSignatureSuite(agent, currentDid.didDocument, verificationMethodId)
     const credential = {
         '@context': [
@@ -1067,9 +988,8 @@ async function createNrrCredential(agent, encryptedMessage, requestBody) {
         issuer: currentDid.didDocument.id,
         issuanceDate: toCompactW3cDate(new Date()),
         credentialSubject: {
-            id: requesterDid,
-            ...(requestedResource ? { requestedResource } : {}),
-            signedHash: messageHash,
+            id: didV,
+            signedHash: commitment,
         },
     }
 
@@ -1109,103 +1029,33 @@ function toCompactW3cDate(value) {
     )
 }
 
-async function verifyNroCredential(agent, hashCredential) {
-    const credentialJson = parseJsonIfNeeded(hashCredential);
+// Verifies an NRO/NRR credential and extracts the commitment C it signs (credentialSubject.signedHash).
+async function verifyCommitmentCredential(agent, signed) {
+    const credentialJson = parseJsonIfNeeded(signed);
+    if (!credentialJson || typeof credentialJson !== 'object' || Array.isArray(credentialJson)) {
+        throw new Error('Expected a verifiable credential.');
+    }
+
     const credential = JsonTransformer.fromJSON(credentialJson, W3cJsonLdVerifiableCredential);
     const result = await agent.w3cCredentials.verifyCredential({credential});
-
     if (!result.isValid) {
-        throw new Error(result.error?.message ?? 'The NRO credential could not be verified.');
+        throw new Error(result.error?.message ?? 'The credential could not be verified.');
     }
 
-    return credentialJson;
-}
-
-async function verifyCssSignatureAndExtractHash(agent, signatureFromCSS) {
-    if (signatureFromCSS === undefined || signatureFromCSS === null) {
-        return undefined;
+    const issuer = typeof credentialJson.issuer === 'string' ? credentialJson.issuer : credentialJson.issuer?.id;
+    const proof = Array.isArray(credentialJson.proof) ? credentialJson.proof[0] : credentialJson.proof;
+    const subject = Array.isArray(credentialJson.credentialSubject)
+        ? credentialJson.credentialSubject[0]
+        : credentialJson.credentialSubject;
+    const commitment = subject?.signedHash;
+    if (typeof issuer !== 'string' || typeof proof?.verificationMethod !== 'string' || typeof commitment !== 'string') {
+        throw new Error('The credential does not carry an issuer, a proof and a signed commitment.');
+    }
+    if (proof.verificationMethod.split('#')[0] !== issuer) {
+        throw new Error('The credential is not signed with a key of its issuer.');
     }
 
-    const jws = normalizeJws(signatureFromCSS, 'signatureFromCSS');
-    const jwsService = new JwsService();
-    const {isValid} = await jwsService.verifyJws(agent.context, {
-        jws,
-        jwkResolver: ({jws: {header}}) => {
-            if (typeof header.kid !== 'string' || !isDid(header.kid, 'key')) {
-                throw new Error('CSS JWS header kid must be a did:key DID.');
-            }
-
-            const didKey = DidKey.fromDid(header.kid);
-            return getJwkFromKey(didKey.key);
-        },
-    });
-
-    if (!isValid) {
-        throw new Error('The CSS signature included with the NRO is invalid.');
-    }
-
-    return TypedArrayEncoder.toUtf8String(TypedArrayEncoder.fromBase64(jws.payload));
-}
-
-function extractSignedHashFromHashCredential(hashCredential) {
-    const parsedCredential = parseJsonIfNeeded(hashCredential);
-    const signedHashFromSubject = extractSignedHashFromCredentialSubject(parsedCredential);
-    if (typeof signedHashFromSubject === 'string') {
-        return signedHashFromSubject;
-    }
-
-    if (parsedCredential && typeof parsedCredential === 'object' && typeof parsedCredential.signedHash === 'string') {
-        return parsedCredential.signedHash;
-    }
-
-    return undefined;
-}
-
-function extractRequesterDidFromHashCredential(hashCredential) {
-    const credential = parseJsonIfNeeded(hashCredential);
-    const credentialSubject = credential?.credentialSubject;
-
-    if (typeof credentialSubject?.id === 'string') {
-        return credentialSubject.id;
-    }
-
-    if (Array.isArray(credentialSubject)) {
-        const subjectWithId = credentialSubject.find((subject) => typeof subject?.id === 'string');
-        if (subjectWithId) {
-            return subjectWithId.id;
-        }
-    }
-
-    return undefined;
-}
-
-function extractSignedHashFromCredentialSubject(credential) {
-    const credentialSubject = credential?.credentialSubject;
-
-    if (credentialSubject && !Array.isArray(credentialSubject) && typeof credentialSubject === 'object') {
-        return typeof credentialSubject.signedHash === 'string' ? credentialSubject.signedHash : undefined;
-    }
-
-    if (Array.isArray(credentialSubject)) {
-        const subjectWithHash = credentialSubject.find((subject) => typeof subject?.signedHash === 'string');
-        if (subjectWithHash) {
-            return subjectWithHash.signedHash;
-        }
-    }
-
-    return undefined;
-}
-
-function normalizeJws(jws, fieldName) {
-    const parsedJws = parseJsonIfNeeded(jws);
-    if (!parsedJws || typeof parsedJws !== 'object' || typeof parsedJws.payload !== 'string') {
-        throw new Error(`The ${fieldName} field must contain a valid JWS payload.`);
-    }
-
-    return {
-        ...parsedJws,
-        payload: parsedJws.payload,
-    };
+    return {issuer, commitment};
 }
 
 function parseJsonIfNeeded(value) {

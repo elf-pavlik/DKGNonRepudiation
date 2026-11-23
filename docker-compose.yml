@@ -83,10 +83,10 @@ services:
 
   solid-css:
     build:
-      context: ../biagioboi-CommunitySolidServer
+      context: ../../solid_june_26/CommunitySolidServer
     image: biagioboi-css:latest
     container_name: solid-css
-    command: -c config/file-vc.json -f data -b http://localhost:3002/ -p 3002
+    command: -c config/file-vc.json -f /data -b http://localhost:3002/ -p 3002
     ports:
       - "3002:3002"
       - "3015:3015"

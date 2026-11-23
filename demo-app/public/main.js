@@ -1460,7 +1460,8 @@ async function VcBasedrequestsDID() {
     const releaseResult = await fetchJson(`${appBaseUrl}/completeNonRepudiableRelease`, {
         method: "POST",
         headers: {'Content-Type': 'application/json'},
-        body: JSON.stringify({url, agent: user, encryptedResource: encryptedResourceHeader, useTtp})
+        // The VPR carries DID_V (owner) and n_c (challenge), which the app needs to recompute C.
+        body: JSON.stringify({url, agent: user, encryptedResource: encryptedResourceHeader, vpr: serializedProofRequest, useTtp})
     });
     finalizeUnlockedState(releaseResult.content);
 }

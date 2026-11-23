@@ -8,11 +8,12 @@ The repo has one folder per agent: demo-app, demo-issuer, demo-ttp, demo-user. T
 
 ```bash
 docker network create solid-demo-net
-git clone https://github.com/biagioboi/CommunitySolidServer ../biagioboi-CommunitySolidServer
 docker compose up -d --build
 ```
 
-docker-compose.yml builds the modified Community Solid Server from the sibling checkout and starts the whole network. It holds generated dev secrets and is committed so the demo reproduces. docker-compose-template.yml is the original template.
+docker-compose.yml builds the modified Community Solid Server from a local checkout and starts the whole network. The `build.context` of the `solid-css` service must point to that checkout's path. It is currently `../../solid_june_26/CommunitySolidServer`. Change it if your CSS lives somewhere else.
+
+Use the CSS checkout that implements the new commitment-based release: E, Y, h, h_K, an NRO over C, and K_ttp agreed with the TTP over `/keyExchange`. The older version on GitHub (`https://github.com/biagioboi/CommunitySolidServer`, previously cloned as `../biagioboi-CommunitySolidServer`) uses the legacy flow and does not work with the current demo-app and demo-ttp. Rebuild solid-css and demo-ttp together, so that both start from the same K_ttp. It holds generated dev secrets and is committed so the demo reproduces. docker-compose-template.yml is the original template.
 
 ## Services
 

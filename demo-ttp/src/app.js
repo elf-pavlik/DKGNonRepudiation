@@ -18,7 +18,7 @@ const {
     ConsoleLogger, LogLevel, RoutingService, HandshakeProtocol, MediationRecipientService, MediatorPickupStrategy,
     MediationRecipientModule, MediatorService, MediatorModule, OutOfBandEventTypes, PeerDidNumAlgo, ClaimFormat,
     CREDENTIALS_CONTEXT_V1_URL, WRAPPER_VP_CONTEXT_URL, W3cPresentationRequest, AgentMessage, Key, BasicMessage,
-    DidKey, JwsService, getJwkFromKey, isDid, WalletKeyExistsError
+    DidKey, WalletKeyExistsError, getKeyFromVerificationMethod
 } = require('@credo-ts/core')
 const {
     AnonCredsCredentialFormatService,
@@ -42,10 +42,24 @@ var bodyParser = require('body-parser');
 const express = require('express');
 const fs = require('fs');
 const path = require('path');
-const {createHash, randomUUID} = require("crypto");
-const {EnvelopeService} = require("@credo-ts/core/build/agent/EnvelopeService");
+const {randomUUID} = require("crypto");
 const {defaultDocumentLoader} = require('@credo-ts/core/build/modules/vc/data-integrity/libraries/documentLoader');
 const {NrrGraphService} = require('./audit/NrrGraphService');
+const {
+    TAG_KEX_CSS,
+    TAG_KEX_TTP,
+    TAG_TTP_RECEIPT,
+    toBase64Url,
+    fromBase64Url,
+    seal,
+    hashKey,
+    computeCommitment,
+    splitKid,
+    unwrapKey,
+    generateEphemeralKeyPair,
+    keyExchangePayload,
+    deriveTtpKey,
+} = require('./vera-crypto');
 
 const NON_REPUDIATION_CONTEXT_URL = 'https://privateclinic.solidcommunity.net/public/NonRepudiationContext.jsonld';
 const NON_REPUDIATION_CONTEXT_PATH = [
@@ -63,6 +77,11 @@ const NON_REPUDIATION_CONTEXT = JSON.parse(
 const nrrGraphService = new NrrGraphService({
     rootFilePath: path.join(__dirname, '..'),
 });
+// K_ttp shared with each CSS, keyed by key id. Persisted so that wrapped keys Y issued before a
+// restart can still be opened.
+const TTP_KEYS_PATH = path.join(__dirname, '..', '.internal', 'kttp', 'keys.json');
+// The TTP reaches the CSS via the docker network, not via the browser-facing origin in URI.
+const CSS_INTERNAL_BASE = process.env.CSS_INTERNAL_BASE || 'http://solid-css:3002';
 
 const prompt = require('prompt-sync')();
 const TTP_DID = process.env.TTP_DID || 'did:web:raw.githubusercontent.com:biagioboi:DKGNonRepudiation:main:demo-ttp:config';
@@ -233,142 +252,97 @@ app.get('/', (req, res) => {
     res.send("TTP Running.")
 });
 
-app.get('/generateInvitation', async (req, res) => {
+// Setup phase (m10/m11 in the ProVerif model): authenticated ephemeral Diffie-Hellman with a CSS,
+// each half signed with the party's did:web key, yielding the long-term K_ttp shared with that CSS.
+app.post('/keyExchange', async (req, res) => {
     try {
         await ensureStarted();
+        const {did, publicKey, signature} = req.body ?? {};
+        if (typeof did !== 'string' || typeof publicKey !== 'string' || typeof signature !== 'string') {
+            res.status(400).json({error: 'Expected did, publicKey and signature.'});
+            return;
+        }
 
-        res.status(200);
-        const outOfBandRecord = await agent.oob.createInvitation({
-            autoAcceptConnection: true,
-            handshake: true,
-            invitationDid: TTP_DID,
-        })
+        const signedByCss = await verifyDidSignature(did, keyExchangePayload(TAG_KEX_CSS, did, publicKey), fromBase64Url(signature));
+        if (!signedByCss) {
+            throw new Error(`The key exchange request is not signed by ${did}.`);
+        }
 
-        agent.events.on(ConnectionEventTypes.ConnectionStateChanged, async ({payload}) => {
-            console.log(JSON.stringify(payload));
-            if (payload.connectionRecord.state === DidExchangeState.Completed) {
-                console.log(JSON.stringify(payload));
-            }
-        });
-        console.log("I'm generating a new invitation");
-        const invitationUrl = outOfBandRecord.outOfBandInvitation.toUrl({domain: sys_config.get('wallet.endpoint')})
-        res.json({url: invitationUrl, connectionId: outOfBandRecord.id})
+        const ephemeral = generateEphemeralKeyPair();
+        const ttpSignature = await signWithDidKey(keyExchangePayload(TAG_KEX_TTP, TTP_DID, ephemeral.publicKey, publicKey));
+        const {kid, key} = deriveTtpKey(ephemeral.privateKey, publicKey, publicKey, ephemeral.publicKey);
+        await saveTtpKey({kid, key, cssDid: did});
+        console.log(`K_ttp ${kid} established with ${did}`);
+
+        res.status(200).json({did: TTP_DID, publicKey: ephemeral.publicKey, signature: toBase64Url(ttpSignature), kid});
     } catch (error) {
-        console.error('demo-ttp generateInvitation error', error);
-        res.status(503).json({
-            error: error.message ?? 'demo-ttp is not ready yet.',
-        })
+        console.error('TTP key exchange error', error);
+        res.status(400).json({error: error.message ?? 'Unable to complete the key exchange.'});
     }
 });
 
-async function handleDisputeFromCss(req, res) {
-    const signedResource = extractSignedResourceFromRequestBody(req.body);
-    if (signedResource === undefined) {
-        res.status(400).json({error: 'Missing app NRR in the request body.'})
-        return;
-    }
-
+// TTP Resolution (paper Section 3.3, m15/m16): the app submits DID_U, URI, n_c, H(E), Y, h, h_K, the NRO
+// and the NRR - but not E, which never leaves the app. The TTP opens Y with K_ttp, checks it against the
+// submission, recomputes C, verifies both signatures on C, then releases K_R and forwards the NRR to the CSS.
+app.post('/checkResource', async (req, res) => {
     try {
         await ensureStarted();
-        const encryptedMessage = extractEncryptedMessageFromRequestBody(req.body);
-        const expectedHashFromRequest = typeof req.body.expectedHash === 'string'
-            ? req.body.expectedHash
-            : typeof req.body.messageHash === 'string'
-                ? req.body.messageHash
-                : undefined;
-        const expectedHash = encryptedMessage
-            ? await extractReferenceHashFromEncryptedMessage(encryptedMessage)
-            : expectedHashFromRequest;
-        const appSignatureInfo = await verifyAndExtractAppSignedResource(signedResource, expectedHash);
-        const matchedTraceRecords = await nrrGraphService.findReceivedNrr({
-            messageHash: appSignatureInfo.signedHash,
-            signedResource,
+        const {didU, uri, nc, hE, Y, h, hK, nro, nrr} = req.body ?? {};
+        for (const [name, value] of Object.entries({didU, uri, nc, hE, Y, h, hK})) {
+            if (typeof value !== 'string') {
+                throw new Error(`Missing ${name} in the request body.`);
+            }
+        }
+
+        const {kid} = splitKid(Y);
+        const ttpKey = await loadTtpKey(kid);
+        if (!ttpKey) {
+            throw new Error(`Unknown K_ttp key id ${kid}.`);
+        }
+
+        // The requesting app is the one that signed the NRR (and, once the channel uses mutual TLS,
+        // the one presenting the client certificate).
+        const appSignature = await verifyCommitmentCredential(nrr);
+        const wrapped = unwrapKey(ttpKey.key, Y);
+        if (wrapped.didA !== appSignature.issuer || wrapped.nc !== nc || wrapped.hE !== hE) {
+            throw new Error('Y is not bound to the requesting app, the submitted nonce and the submitted H(E).');
+        }
+        if (hashKey(wrapped.kR) !== hK) {
+            throw new Error('The key wrapped in Y does not match h_K.');
+        }
+
+        const commitment = computeCommitment({didV: ttpKey.cssDid, didA: wrapped.didA, didU, uri, nc, hE, Y, h, hK});
+        const cssSignature = await verifyCommitmentCredential(nro);
+        if (cssSignature.issuer !== ttpKey.cssDid || cssSignature.commitment !== commitment) {
+            throw new Error('The NRO is not a signature of the CSS on C.');
+        }
+        if (appSignature.commitment !== commitment) {
+            throw new Error('The NRR is not a signature of the app on C.');
+        }
+
+        const nrrRecord = await nrrGraphService.storeReceivedNrr({
+            messageHash: commitment,
+            receivedAt: new Date().toISOString(),
+            signedResource: nrr,
+        });
+
+        // Releasing K_R never waits for the CSS: it may be offline, or a party to the dispute.
+        forwardNrrToCss(ttpKey, nrr, uri).catch((error) => {
+            console.error(`Could not forward the NRR for commitment ${commitment} to the CSS`, error);
         });
 
         res.status(200).json({
-            genuine: true,
-            messageHash: appSignatureInfo.signedHash,
-            signerKid: appSignatureInfo.signerKid,
-            matchedTraceCount: matchedTraceRecords.length,
-            matchedTraceIds: matchedTraceRecords.map((record) => record.id),
-        })
+            keyForDecrypt: toBase64Url(wrapped.kR),
+            commitment,
+            nrrRecordId: nrrRecord.id,
+        });
     } catch (error) {
-        console.error('TTP dispute validation error', error);
+        console.error('TTP resolution error', error);
         res.status(400).json({
-            error: error.message ?? 'Unable to validate the app NRR.',
-        })
+            error: error.message ?? 'Unable to resolve the non-repudiable release.',
+        });
     }
-}
-
-app.post('/checkResource', async (req, res) => {
-    const encryptedMessage = extractEncryptedMessageFromRequestBody(req.body);
-    const signedResource = extractSignedResourceFromRequestBody(req.body);
-    if (encryptedMessage === undefined && signedResource === undefined) {
-        res.status(400).json({error: 'Unable to process the request.'})
-        return;
-    }
-
-    try {
-        await ensureStarted();
-        let verification;
-        let symKeyForDecrypt;
-        let appSignatureInfo;
-
-        if (encryptedMessage !== undefined) {
-            if (typeof encryptedMessage !== 'object' || typeof encryptedMessage.protected !== 'string') {
-                throw new Error('The encrypted resource is not a valid JWE message.');
-            }
-
-            const env_service = new EnvelopeService(new ConsoleLogger());
-            const dec_message = await env_service.unpackMessageWithReturn(agent.context, encryptedMessage);
-            verification = await verifyRecoveryMaterial(
-                encryptedMessage,
-                dec_message.plaintextMessage,
-                signedResource
-            );
-            symKeyForDecrypt = dec_message.payloadKey;
-        } else {
-            appSignatureInfo = await verifyAndExtractAppSignedResource(signedResource);
-            verification = {
-                mode: 'nrr-only',
-                messageHash: appSignatureInfo.signedHash,
-                signerKid: appSignatureInfo.signerKid,
-                cssSignatureVerified: false,
-                hashCredentialVerified: false,
-                appSignatureVerified: true,
-            };
-        }
-
-        let nrrRecord;
-        if (signedResource !== undefined) {
-            if (!appSignatureInfo) {
-                appSignatureInfo = await verifyAndExtractAppSignedResource(signedResource, verification.messageHash);
-            }
-
-            nrrRecord = await nrrGraphService.storeReceivedNrr({
-                encryptedResource: encryptedMessage,
-                messageHash: appSignatureInfo.signedHash,
-                receivedAt: new Date().toISOString(),
-                signedResource,
-            });
-        }
-
-        /* The TTP can now release the symmetric key after validating the non-repudiation material. */
-        res.status(200).json({
-            symKeyForDecrypt,
-            verification,
-            nrrRecordId: nrrRecord?.id,
-        })
-    } catch (error) {
-        console.error('TTP validation error', error);
-        res.status(400).json({
-            error: error.message ?? 'Unable to validate the encrypted resource.',
-        })
-    }
-})
-
-app.post('/disputeFromCSS', handleDisputeFromCss)
-app.post('/disputefromCSS', handleDisputeFromCss)
+});
 
 app.listen(PORT, (error) => {
         if (!error)
@@ -473,197 +447,96 @@ function getAskarAnonCredsIndyModules(genesisTransactionsBCovrinTestNet) {
     }
 }
 
-async function verifyRecoveryMaterial(encryptedMessage, plaintextMessage, signedResource) {
-    // Hash the raw content string, not the whole decrypted DIDComm envelope: the CSS computes
-    // the reference hash the same way (see AgentInitializer.buildNonRepudiableRelease), since
-    // re-serializing the envelope object independently on each side isn't guaranteed to produce
-    // byte-identical JSON. `plaintextMessage` may come back as the raw JSON string of the
-    // envelope rather than an already-parsed object, depending on the EnvelopeService version.
-    const parsedPlaintext = typeof plaintextMessage === 'string' ? JSON.parse(plaintextMessage) : plaintextMessage;
-    const content = typeof parsedPlaintext === 'string' ? parsedPlaintext : parsedPlaintext?.content;
-    if (typeof content !== 'string') {
-        throw new Error('Could not extract the message content from the decrypted envelope.');
-    }
-    const computedHash = createHash('sha256').update(content).digest('hex');
-    const referenceHash = await extractReferenceHashFromEncryptedMessage(encryptedMessage);
-
-    if (!referenceHash) {
-        return {
-            mode: 'legacy',
-            computedHash,
-            cssSignatureVerified: false,
-            hashCredentialVerified: false,
-            appSignatureVerified: false,
+async function readTtpKeys() {
+    try {
+        return JSON.parse(await fs.promises.readFile(TTP_KEYS_PATH, 'utf8'));
+    } catch (error) {
+        if (error.code === 'ENOENT') {
+            return {};
         }
-    }
-
-    if (computedHash !== referenceHash) {
-        throw new Error('The decrypted message hash does not match the non-repudiation material.');
-    }
-
-    let hashCredentialVerified = false;
-    if (encryptedMessage.hashCredential !== undefined) {
-        hashCredentialVerified = await verifyHashCredential(encryptedMessage.hashCredential);
-    }
-
-    let appSignatureVerified = false;
-    let appSignerKid;
-    if (signedResource !== undefined) {
-        const appSignatureInfo = await verifyAndExtractAppSignedResource(signedResource, referenceHash);
-        appSignatureVerified = true;
-        appSignerKid = appSignatureInfo.signerKid;
-    }
-
-    return {
-        mode: 'non-repudiation',
-        computedHash,
-        messageHash: referenceHash,
-        cssSignatureVerified: encryptedMessage.signatureFromCSS !== undefined,
-        hashCredentialVerified,
-        appSignatureVerified,
-        appSignerKid,
+        throw error;
     }
 }
 
-async function extractReferenceHashFromEncryptedMessage(encryptedMessage) {
-    if (!encryptedMessage || typeof encryptedMessage !== 'object') {
-        return undefined;
-    }
-
-    const statedHash = typeof encryptedMessage.hash === 'string' ? encryptedMessage.hash : undefined;
-    const credentialHash = extractSignedHashFromHashCredential(encryptedMessage.hashCredential);
-    const cssSignatureHash = await verifyCssSignatureAndExtractHash(encryptedMessage.signatureFromCSS);
-    const referenceHash = statedHash ?? credentialHash ?? cssSignatureHash;
-
-    if (!referenceHash) {
-        return undefined;
-    }
-
-    if (statedHash !== undefined && statedHash !== referenceHash) {
-        throw new Error('The encrypted message hash does not match the non-repudiation material.');
-    }
-
-    if (credentialHash !== undefined && credentialHash !== referenceHash) {
-        throw new Error('The non-repudiation credential does not match the encrypted message hash.');
-    }
-
-    if (cssSignatureHash !== undefined && cssSignatureHash !== referenceHash) {
-        throw new Error('The CSS signature does not match the encrypted message hash.');
-    }
-
-    return referenceHash;
+async function saveTtpKey({kid, key, cssDid}) {
+    const keys = await readTtpKeys();
+    keys[kid] = {key: toBase64Url(key), cssDid, createdAt: new Date().toISOString()};
+    await fs.promises.mkdir(path.dirname(TTP_KEYS_PATH), {recursive: true});
+    await fs.promises.writeFile(TTP_KEYS_PATH, JSON.stringify(keys, null, 2), {encoding: 'utf8', mode: 0o600});
 }
 
-async function verifyCssSignatureAndExtractHash(signatureFromCSS) {
-    if (signatureFromCSS === undefined || signatureFromCSS === null) {
-        return undefined;
-    }
+async function loadTtpKey(kid) {
+    const entry = (await readTtpKeys())[kid];
+    return entry ? {kid, key: fromBase64Url(entry.key), cssDid: entry.cssDid} : undefined;
+}
 
-    const jws = normalizeJws(signatureFromCSS, 'signatureFromCSS');
-    const jwsService = new JwsService();
-    const {isValid} = await jwsService.verifyJws(agent.context, {
-        jws,
-        jwkResolver: ({jws: {header}}) => {
-            if (typeof header.kid !== 'string' || !isDid(header.kid, 'key')) {
-                throw new Error('CSS JWS header kid must be a did:key DID.');
-            }
-            const didKey = DidKey.fromDid(header.kid);
-            return getJwkFromKey(didKey.key);
+// m17: the NRR travels to the CSS sealed under K_ttp, so the CSS knows it comes from this TTP.
+async function forwardNrrToCss({kid, key}, nrr, uri) {
+    const receipt = `${kid}.${seal(key, Buffer.from(JSON.stringify({nrr, uri}), 'utf8'), TAG_TTP_RECEIPT)}`;
+    const originalUrl = new URL(uri);
+    const internalUrl = new URL(uri);
+    const internalBase = new URL(CSS_INTERNAL_BASE);
+    internalUrl.protocol = internalBase.protocol;
+    internalUrl.host = internalBase.host;
+
+    // Same X-Forwarded-* convention the app uses, so the CSS resolves the original resource identifier.
+    const response = await fetch(internalUrl.toString(), {
+        headers: {
+            ttpreceipt: receipt,
+            'x-forwarded-host': originalUrl.host,
+            'x-forwarded-proto': originalUrl.protocol.replace(':', ''),
         },
     });
-
-    if (!isValid) {
-        throw new Error('The CSS signature over the encrypted message hash is invalid.');
+    if (!response.ok) {
+        throw new Error(`The CSS rejected the forwarded NRR with ${response.status}: ${await response.text()}`);
     }
-
-    return TypedArrayEncoder.toUtf8String(TypedArrayEncoder.fromBase64(jws.payload));
 }
 
-async function verifyHashCredential(hashCredential) {
-    const credentialJson = typeof hashCredential === 'string' ? JSON.parse(hashCredential) : hashCredential;
+async function signWithDidKey(data) {
+    const [createdDid] = await agent.dids.getCreatedDids({method: 'web', did: TTP_DID});
+    const verificationMethod = createdDid?.didDocument?.verificationMethod?.[0];
+    if (!verificationMethod) {
+        throw new Error(`No verification method found for ${TTP_DID}.`);
+    }
+    return agent.context.wallet.sign({data, key: getKeyFromVerificationMethod(verificationMethod)});
+}
+
+async function verifyDidSignature(did, data, signature) {
+    const didDocument = await agent.dids.resolveDidDocument(did);
+    const verificationMethod = didDocument.verificationMethod?.[0];
+    if (!verificationMethod) {
+        throw new Error(`No verification method found for ${did}.`);
+    }
+    return agent.context.wallet.verify({data, key: getKeyFromVerificationMethod(verificationMethod), signature});
+}
+
+// Verifies an NRO/NRR credential and extracts the commitment C it signs (credentialSubject.signedHash).
+async function verifyCommitmentCredential(signed) {
+    const credentialJson = parseJsonIfNeeded(signed);
+    if (!credentialJson || typeof credentialJson !== 'object' || Array.isArray(credentialJson)) {
+        throw new Error('Expected a verifiable credential.');
+    }
+
     const credential = JsonTransformer.fromJSON(credentialJson, W3cJsonLdVerifiableCredential);
     const result = await agent.w3cCredentials.verifyCredential({credential});
-
     if (!result.isValid) {
-        const verificationError = result.error?.message ?? 'The non-repudiation credential could not be verified.';
-        throw new Error(verificationError);
+        throw new Error(result.error?.message ?? 'The credential could not be verified.');
     }
 
-    return true;
-}
-
-async function verifyAppSignedResource(signedResource, expectedHash) {
-    await verifyAndExtractAppSignedResource(signedResource, expectedHash);
-    return true;
-}
-
-async function verifyAndExtractAppSignedResource(signedResource, expectedHash) {
-    const parsedSignedResource = parseJsonIfNeeded(signedResource);
-    if (looksLikeCredential(parsedSignedResource)) {
-        const credential = JsonTransformer.fromJSON(parsedSignedResource, W3cJsonLdVerifiableCredential);
-        const result = await agent.w3cCredentials.verifyCredential({credential});
-
-        if (!result.isValid) {
-            const verificationError = result.error?.message ?? 'The signedResource credential is invalid.';
-            throw new Error(verificationError);
-        }
-
-        const signedHash = extractSignedHashFromCredential(parsedSignedResource);
-        if (!signedHash) {
-            throw new Error('Could not extract a signed hash from the signedResource credential.');
-        }
-
-        if (expectedHash !== undefined && signedHash !== expectedHash) {
-            throw new Error('The signedResource credential does not match the expected message hash.');
-        }
-
-        return {
-            credential: parsedSignedResource,
-            signedHash,
-            signerKid: extractVerificationMethodFromProof(parsedSignedResource.proof),
-        };
+    const issuer = typeof credentialJson.issuer === 'string' ? credentialJson.issuer : credentialJson.issuer?.id;
+    const proof = Array.isArray(credentialJson.proof) ? credentialJson.proof[0] : credentialJson.proof;
+    const subject = Array.isArray(credentialJson.credentialSubject)
+        ? credentialJson.credentialSubject[0]
+        : credentialJson.credentialSubject;
+    const commitment = subject?.signedHash;
+    if (typeof issuer !== 'string' || typeof proof?.verificationMethod !== 'string' || typeof commitment !== 'string') {
+        throw new Error('The credential does not carry an issuer, a proof and a signed commitment.');
+    }
+    if (proof.verificationMethod.split('#')[0] !== issuer) {
+        throw new Error('The credential is not signed with a key of its issuer.');
     }
 
-    const jws = normalizeJws(signedResource, 'signedResource');
-    const jwsService = new JwsService();
-    const {isValid} = await jwsService.verifyJws(agent.context, {
-        jws,
-        jwkResolver: ({jws: {header}}) => {
-            if (typeof header.kid !== 'string' || !isDid(header.kid, 'key')) {
-                throw new Error('signedResource JWS header kid must be a did:key DID.');
-            }
-            const didKey = DidKey.fromDid(header.kid);
-            return getJwkFromKey(didKey.key);
-        },
-    });
-
-    if (!isValid) {
-        throw new Error('The signedResource JWS is invalid.');
-    }
-
-    const signedPayload = TypedArrayEncoder.toUtf8String(TypedArrayEncoder.fromBase64(jws.payload));
-    const signedHash = extractSignedHashFromSignedPayload(signedPayload);
-    if (expectedHash !== undefined && signedHash !== expectedHash) {
-        throw new Error('The signedResource payload does not match the expected message hash.');
-    }
-
-    return {
-        jws,
-        signedHash,
-        signerKid: typeof jws.header?.kid === 'string' ? jws.header.kid : undefined,
-    };
-}
-
-function normalizeJws(jws, fieldName) {
-    const parsedJws = parseJsonIfNeeded(jws);
-    if (!parsedJws || typeof parsedJws !== 'object' || typeof parsedJws.payload !== 'string') {
-        throw new Error(`The ${fieldName} field must contain a JWS payload.`);
-    }
-
-    return {
-        ...parsedJws,
-        payload: parsedJws.payload,
-    };
+    return {issuer, commitment};
 }
 
 function parseJsonIfNeeded(value) {
@@ -676,147 +549,4 @@ function parseJsonIfNeeded(value) {
     } catch {
         return value;
     }
-}
-
-function extractEncryptedMessageFromRequestBody(body) {
-    const parsedBody = parseJsonIfNeeded(body);
-    const explicitEncryptedMessage = parseJsonIfNeeded(parsedBody?.encryptedMessage ?? parsedBody?.encryptedResource);
-    if (explicitEncryptedMessage !== undefined) {
-        return explicitEncryptedMessage;
-    }
-
-    if (parsedBody && typeof parsedBody === 'object' && typeof parsedBody.protected === 'string') {
-        return parsedBody;
-    }
-
-    return undefined;
-}
-
-function extractSignedResourceFromRequestBody(body) {
-    const parsedBody = parseJsonIfNeeded(body);
-    return parseJsonIfNeeded(parsedBody?.signedResource ?? parsedBody?.nrr);
-}
-
-function extractSignedHashFromSignedPayload(signedPayload) {
-    if (/^[a-f0-9]{64}$/iu.test(signedPayload)) {
-        return signedPayload;
-    }
-
-    let parsedPayload;
-    try {
-        parsedPayload = JSON.parse(signedPayload);
-    } catch {
-        throw new Error('Could not parse signedResource payload.');
-    }
-
-    if (typeof parsedPayload === 'string' && /^[a-f0-9]{64}$/iu.test(parsedPayload)) {
-        return parsedPayload;
-    }
-
-    if (parsedPayload && typeof parsedPayload === 'object') {
-        if (typeof parsedPayload.hash === 'string') {
-            if (typeof parsedPayload.signatureFromCSS?.payload === 'string') {
-                const cssSignedHash = TypedArrayEncoder.toUtf8String(
-                    TypedArrayEncoder.fromBase64(parsedPayload.signatureFromCSS.payload),
-                );
-
-                if (cssSignedHash !== parsedPayload.hash) {
-                    throw new Error('The signed resource hash does not match the CSS signature payload.');
-                }
-            }
-
-            const credentialHash = extractSignedHashFromHashCredential(parsedPayload.hashCredential);
-            if (credentialHash !== undefined && credentialHash !== parsedPayload.hash) {
-                throw new Error('The signed resource hash does not match the non-repudiation credential.');
-            }
-
-            return parsedPayload.hash;
-        }
-
-        const credentialHash = extractSignedHashFromHashCredential(parsedPayload.hashCredential);
-        if (credentialHash !== undefined) {
-            return credentialHash;
-        }
-
-        if (typeof parsedPayload.signatureFromCSS?.payload === 'string') {
-            return TypedArrayEncoder.toUtf8String(
-                TypedArrayEncoder.fromBase64(parsedPayload.signatureFromCSS.payload),
-            );
-        }
-    }
-
-    throw new Error('Could not extract a hash from signedResource payload.');
-}
-
-function extractSignedHashFromHashCredential(hashCredential) {
-    if (hashCredential === undefined || hashCredential === null) {
-        return undefined;
-    }
-
-    let parsedCredential = hashCredential;
-    if (typeof parsedCredential === 'string') {
-        try {
-            parsedCredential = JSON.parse(parsedCredential);
-        } catch {
-            return undefined;
-        }
-    }
-
-    if (parsedCredential && typeof parsedCredential === 'object') {
-        const signedHashFromSubject = extractSignedHashFromCredentialSubject(parsedCredential);
-        if (typeof signedHashFromSubject === 'string') {
-            return signedHashFromSubject;
-        }
-
-        const signedHash = parsedCredential.signedHash;
-        if (typeof signedHash === 'string') {
-            return signedHash;
-        }
-    }
-
-    return undefined;
-}
-
-function extractSignedHashFromCredential(credential) {
-    const signedHashFromSubject = extractSignedHashFromCredentialSubject(credential);
-    if (typeof signedHashFromSubject === 'string') {
-        return signedHashFromSubject;
-    }
-
-    if (credential && typeof credential === 'object' && typeof credential.signedHash === 'string') {
-        return credential.signedHash;
-    }
-
-    return undefined;
-}
-
-function extractSignedHashFromCredentialSubject(credential) {
-    const credentialSubject = credential?.credentialSubject;
-
-    if (credentialSubject && !Array.isArray(credentialSubject) && typeof credentialSubject === 'object') {
-        return typeof credentialSubject.signedHash === 'string' ? credentialSubject.signedHash : undefined;
-    }
-
-    if (Array.isArray(credentialSubject)) {
-        const subjectWithHash = credentialSubject.find((subject) => typeof subject?.signedHash === 'string');
-        if (subjectWithHash) {
-            return subjectWithHash.signedHash;
-        }
-    }
-
-    return undefined;
-}
-
-function extractVerificationMethodFromProof(proof) {
-    const resolvedProof = Array.isArray(proof) ? proof[0] : proof;
-    return typeof resolvedProof?.verificationMethod === 'string' ? resolvedProof.verificationMethod : undefined;
-}
-
-function looksLikeCredential(value) {
-    if (!value || typeof value !== 'object') {
-        return false;
-    }
-
-    const types = Array.isArray(value.type) ? value.type : [];
-    return types.includes('VerifiableCredential');
 }
